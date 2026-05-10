@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Spider Jockeys: Mount Gosha</title>
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <main id="hud" aria-label="Game HUD">
+      <section class="hud-top" aria-label="Mission status">
+        <div>
+          <p class="eyebrow">Spider Jockeys</p>
+          <h1>Capture Mount Gosha</h1>
+        </div>
+        <div class="score-block">
+          <span>Piglins</span>
+          <strong id="piglinScore">0</strong>
+        </div>
+      </section>
+
+      <section class="hud-bottom" aria-label="Player status">
+        <div class="meter-group">
+          <div class="meter-label">
+            <span>Health</span>
+            <strong id="healthText">100</strong>
+          </div>
+          <div class="meter health">
+            <span id="healthFill"></span>
+          </div>
+        </div>
+        <div class="meter-group capture-meter">
+          <div class="meter-label">
+            <span>Capture</span>
+            <strong id="captureText">0%</strong>
+          </div>
+          <div class="meter capture">
+            <span id="captureFill"></span>
+          </div>
+        </div>
+      </section>
+
+      <div id="status" role="status">Find the evil mount beyond the dunes.</div>
+      <div id="capturePrompt" aria-hidden="true">Capture</div>
+      <div class="reticle" aria-hidden="true"></div>
+    </main>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
