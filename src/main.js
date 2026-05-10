@@ -4,7 +4,10 @@ import "./style.css";
 const worldSize = 170;
 const clock = new THREE.Clock();
 const tempVec = new THREE.Vector3();
+const tempVec2 = new THREE.Vector3();
+const tempVec3 = new THREE.Vector3();
 const playerVelocity = new THREE.Vector3();
+const yAxis = new THREE.Vector3(0, 1, 0);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x050813);
@@ -35,6 +38,9 @@ const ui = {
   piglinScore: document.querySelector("#piglinScore"),
   status: document.querySelector("#status"),
   capturePrompt: document.querySelector("#capturePrompt"),
+  goshaIndicator: document.querySelector("#goshaIndicator"),
+  goshaArrow: document.querySelector("#goshaArrow"),
+  goshaDistance: document.querySelector("#goshaDistance"),
 };
 
 const keys = new Map();
@@ -94,6 +100,19 @@ const materials = {
     emissiveIntensity: 0.7,
     roughness: 0.22,
   }),
+  swordTrail: new THREE.MeshBasicMaterial({
+    color: 0x94ffff,
+    transparent: true,
+    opacity: 0,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  }),
+  impact: new THREE.MeshBasicMaterial({
+    color: 0xb6ffff,
+    transparent: true,
+    opacity: 0.95,
+    depthWrite: false,
+  }),
   gold: new THREE.MeshStandardMaterial({
     color: 0xe5b84f,
     roughness: 0.42,
@@ -122,10 +141,12 @@ const materials = {
 
 let player;
 let swordAnchor;
+let swordTrail;
 let mountGosha;
 let captureRing;
 let captureParticles;
 const piglins = [];
+const impactBursts = [];
 
 setupLighting();
 createSky();
@@ -148,6 +169,7 @@ window.__GOSHA_GAME_DEBUG__ = {
       y: player.position.y,
       z: player.position.z,
     },
+    playerYaw: player.rotation.y,
     mount: {
       x: mountGosha.position.x,
       y: mountGosha.position.y,
@@ -155,8 +177,31 @@ window.__GOSHA_GAME_DEBUG__ = {
     },
     health: game.health,
     capture: game.capture,
+    piglinsDefeated: game.piglinsDefeated,
     piglinsVisible: piglins.filter((piglin) => piglin.visible).length,
+    firstPiglin: {
+      visible: piglins[0].visible,
+      isDown: Boolean(piglins[0].userData.isDown),
+      respawn: piglins[0].userData.respawn,
+    },
   }),
+  placePiglinInSwordRange: () => {
+    const piglin = piglins[0];
+    const forward = getPlayerForward(new THREE.Vector3());
+    const position = player.position.clone().addScaledVector(forward, 2.85);
+    position.y = groundY(position.x, position.z);
+    piglin.position.copy(position);
+    piglin.rotation.set(0, yawForDirection(player.position.clone().sub(piglin.position)), 0);
+    piglin.visible = true;
+    piglin.userData.health = 1;
+    piglin.userData.isDown = false;
+    piglin.userData.downTimer = 0;
+    piglin.userData.respawn = 0;
+    piglin.userData.stun = 0;
+    piglin.userData.velocity.set(0, 0, 0);
+    game.attackCooldown = 0;
+    return window.__GOSHA_GAME_DEBUG__.state();
+  },
 };
 
 window.addEventListener("resize", onResize);
@@ -437,6 +482,9 @@ function createSpiderJockey() {
   rightArm.add(swordAnchor);
   swordAnchor.add(createDiamondSword());
 
+  swordTrail = createSwordTrail();
+  group.add(swordTrail);
+
   group.userData.walkCycle = 0;
   group.userData.legs = group.children.filter((child) => child.userData.isLeg);
   return group;
@@ -485,6 +533,17 @@ function createDiamondSword() {
   sword.add(tip);
 
   return sword;
+}
+
+function createSwordTrail() {
+  const trail = new THREE.Mesh(
+    new THREE.RingGeometry(1.35, 3.45, 54, 1, Math.PI * 1.07, Math.PI * 0.86),
+    materials.swordTrail,
+  );
+  trail.position.set(0, 2.35, -0.48);
+  trail.rotation.x = -Math.PI / 2;
+  trail.visible = false;
+  return trail;
 }
 
 function createMountGosha() {
@@ -641,9 +700,11 @@ function createPiglin(index, x, z) {
   group.userData = {
     spawn: new THREE.Vector3(x, 0, z),
     velocity: new THREE.Vector3(),
-    health: 2,
+    health: 1,
     stun: 0,
     respawn: 0,
+    downTimer: 0,
+    isDown: false,
     attackCooldown: THREE.MathUtils.randFloat(0.1, 1.2),
     speed: THREE.MathUtils.randFloat(3.0, 4.4),
   };
@@ -683,6 +744,7 @@ function animate() {
   }
 
   updateMount(elapsed);
+  updateEffects(delta);
   updateCamera(delta, elapsed);
   updateHud(delta);
   renderer.render(scene, camera);
@@ -699,8 +761,8 @@ function updatePlayer(delta) {
   if (hasMovement) {
     move.normalize();
     const speed = keys.get("ShiftLeft") || keys.get("ShiftRight") ? 14 : 9.2;
+    player.rotation.y = dampAngle(player.rotation.y, yawForDirection(move), 13, delta);
     playerVelocity.lerp(move.multiplyScalar(speed), 0.16);
-    player.rotation.y = Math.atan2(playerVelocity.x, playerVelocity.z);
     player.userData.walkCycle += delta * playerVelocity.length() * 1.4;
   } else {
     playerVelocity.lerp(tempVec.set(0, 0, 0), 0.16);
@@ -729,9 +791,15 @@ function updatePlayer(delta) {
     const swing = Math.sin(t * Math.PI);
     swordAnchor.rotation.z = -1.15 - swing * 1.75;
     swordAnchor.rotation.x = 0.3 + swing * 0.68;
+    swordTrail.visible = true;
+    swordTrail.material.opacity = swing * 0.58;
+    swordTrail.rotation.z = -0.72 + t * 1.46;
+    swordTrail.scale.setScalar(0.9 + swing * 0.16);
   } else {
     swordAnchor.rotation.z = THREE.MathUtils.lerp(swordAnchor.rotation.z, -1.15, 0.14);
     swordAnchor.rotation.x = THREE.MathUtils.lerp(swordAnchor.rotation.x, 0.35, 0.14);
+    swordTrail.material.opacity = THREE.MathUtils.lerp(swordTrail.material.opacity, 0, 0.22);
+    swordTrail.visible = swordTrail.material.opacity > 0.02;
   }
 }
 
@@ -749,11 +817,25 @@ function updatePiglins(delta) {
 
     if (data.respawn > 0) {
       data.respawn -= delta;
+
+      if (data.isDown) {
+        data.downTimer -= delta;
+        piglin.position.addScaledVector(data.velocity, delta);
+        data.velocity.multiplyScalar(0.9);
+        piglin.position.y = groundY(piglin.position.x, piglin.position.z);
+        piglin.rotation.x = THREE.MathUtils.lerp(piglin.rotation.x, -Math.PI / 2, 0.16);
+        piglin.rotation.z = THREE.MathUtils.lerp(piglin.rotation.z, 0.24, 0.12);
+
+        if (data.downTimer <= 0) {
+          piglin.visible = false;
+          data.isDown = false;
+        }
+
+        return;
+      }
+
       if (data.respawn <= 0) {
-        const spawn = data.spawn;
-        piglin.position.set(spawn.x, groundY(spawn.x, spawn.z), spawn.z);
-        piglin.visible = true;
-        data.health = 2;
+        resetPiglin(piglin);
       }
       return;
     }
@@ -772,7 +854,7 @@ function updatePiglins(delta) {
       toPlayer.normalize();
       const speed = data.speed * (distance < 18 ? 1.15 : 1);
       piglin.position.addScaledVector(toPlayer, speed * delta);
-      piglin.rotation.y = Math.atan2(toPlayer.x, toPlayer.z);
+      piglin.rotation.y = yawForDirection(toPlayer);
 
       if (distance < 2.1 && data.attackCooldown <= 0) {
         damagePlayer(8 + Math.floor(index % 3), "A piglin blocked the charge.");
@@ -786,7 +868,7 @@ function updatePiglins(delta) {
         home.y = 0;
         home.normalize();
         piglin.position.addScaledVector(home, data.speed * 0.4 * delta);
-        piglin.rotation.y = Math.atan2(home.x, home.z);
+        piglin.rotation.y = yawForDirection(home);
       }
     }
 
@@ -859,10 +941,7 @@ function updateMount(elapsed) {
 }
 
 function updateCamera(delta, elapsed) {
-  const cameraOffset = new THREE.Vector3(0, 5.8, -10.8).applyAxisAngle(
-    new THREE.Vector3(0, 1, 0),
-    player.rotation.y,
-  );
+  const cameraOffset = new THREE.Vector3(0, 5.8, 10.8).applyAxisAngle(yAxis, player.rotation.y);
   const desired = player.position.clone().add(cameraOffset);
   desired.y = Math.max(desired.y, groundY(desired.x, desired.z) + 3.2);
 
@@ -896,6 +975,7 @@ function updateHud(delta) {
   ui.captureFill.style.width = `${game.capture}%`;
   ui.captureText.textContent = `${Math.round(game.capture)}%`;
   ui.piglinScore.textContent = `${game.piglinsDefeated}`;
+  updateGoshaIndicator();
 }
 
 function swingSword() {
@@ -903,33 +983,105 @@ function swingSword() {
 
   game.attackCooldown = 0.54;
   game.attackTimer = 0.36;
-  let hit = false;
+  const hits = getSwordHits();
+
+  hits.forEach(({ piglin, hitDir }) => takeDownPiglin(piglin, hitDir));
+
+  if (hits.length > 0) {
+    game.cameraShake = Math.max(game.cameraShake, 0.08);
+  } else {
+    setStatus("Face a piglin and swing close to land the diamond sword.", 1.2);
+  }
+}
+
+function getSwordHits() {
+  const forward = getPlayerForward(tempVec2);
+  const right = getPlayerRight(tempVec3);
+  const hits = [];
 
   piglins.forEach((piglin) => {
     const data = piglin.userData;
-    if (!piglin.visible || data.respawn > 0) return;
+    if (!piglin.visible || data.respawn > 0 || data.isDown) return;
 
-    const distance = piglin.position.distanceTo(player.position);
-    if (distance > 3.7) return;
+    const offset = piglin.position.clone().sub(player.position);
+    offset.y = 0;
+    const distance = offset.length();
+    if (distance > 4.85 || distance < 0.25) return;
 
-    const hitDir = piglin.position.clone().sub(player.position);
-    hitDir.y = 0;
-    hitDir.normalize();
-    data.health -= 1;
-    data.stun = 0.75;
-    data.velocity.copy(hitDir).multiplyScalar(8.5);
-    hit = true;
+    const lateral = Math.abs(offset.dot(right));
+    const direction = offset.clone().normalize();
+    const inFrontArc = direction.dot(forward) > 0.28 && lateral < 3.15;
 
-    if (data.health <= 0) {
-      piglin.visible = false;
-      data.respawn = 6.4;
-      game.piglinsDefeated += 1;
-      setStatus("Piglin knocked out of the dune path.");
+    if (inFrontArc) {
+      hits.push({ piglin, hitDir: direction, distance });
     }
   });
 
-  if (hit) {
-    game.cameraShake = Math.max(game.cameraShake, 0.08);
+  return hits.sort((a, b) => a.distance - b.distance).slice(0, 2);
+}
+
+function takeDownPiglin(piglin, hitDir) {
+  const data = piglin.userData;
+  data.health = 0;
+  data.stun = 0;
+  data.isDown = true;
+  data.downTimer = 1.1;
+  data.respawn = 5.8;
+  data.velocity.copy(hitDir).multiplyScalar(10.5);
+  data.attackCooldown = 1.2;
+  game.piglinsDefeated += 1;
+
+  createHitBurst(piglin.position.clone().add(new THREE.Vector3(0, 1.35, 0)), hitDir);
+  setStatus("Diamond sword hit. Piglin down.");
+}
+
+function createHitBurst(position, hitDir) {
+  const burst = new THREE.Group();
+  burst.position.copy(position);
+
+  for (let i = 0; i < 8; i += 1) {
+    const shard = new THREE.Mesh(new THREE.TetrahedronGeometry(0.12, 0), materials.impact);
+    const spread = new THREE.Vector3(
+      THREE.MathUtils.randFloatSpread(1.3),
+      THREE.MathUtils.randFloat(0.15, 1),
+      THREE.MathUtils.randFloatSpread(1.3),
+    ).addScaledVector(hitDir, 1.4);
+
+    shard.userData.velocity = spread.multiplyScalar(THREE.MathUtils.randFloat(2.8, 5.8));
+    shard.rotation.set(
+      THREE.MathUtils.randFloat(0, Math.PI),
+      THREE.MathUtils.randFloat(0, Math.PI),
+      THREE.MathUtils.randFloat(0, Math.PI),
+    );
+    burst.add(shard);
+  }
+
+  burst.userData.life = 0.46;
+  impactBursts.push(burst);
+  scene.add(burst);
+}
+
+function updateEffects(delta) {
+  for (let i = impactBursts.length - 1; i >= 0; i -= 1) {
+    const burst = impactBursts[i];
+    burst.userData.life -= delta;
+
+    burst.children.forEach((shard) => {
+      shard.position.addScaledVector(shard.userData.velocity, delta);
+      shard.userData.velocity.y -= 7.5 * delta;
+      shard.rotation.x += delta * 7;
+      shard.rotation.y += delta * 9;
+    });
+
+    const opacity = Math.max(0, burst.userData.life / 0.46);
+    burst.children.forEach((shard) => {
+      shard.material.opacity = opacity;
+    });
+
+    if (burst.userData.life <= 0) {
+      scene.remove(burst);
+      impactBursts.splice(i, 1);
+    }
   }
 }
 
@@ -960,22 +1112,84 @@ function resetGame() {
   game.attackTimer = 0;
   game.cameraShake = 0;
   player.position.set(0, groundY(0, 8), 8);
-  player.rotation.y = Math.PI;
+  player.rotation.y = 0;
   playerVelocity.set(0, 0, 0);
   mountGosha.userData.base.set(8, 0, -74);
 
   piglins.forEach((piglin) => {
-    const spawn = piglin.userData.spawn;
-    piglin.position.set(spawn.x, groundY(spawn.x, spawn.z), spawn.z);
-    piglin.visible = true;
-    piglin.userData.health = 2;
-    piglin.userData.stun = 0;
-    piglin.userData.respawn = 0;
-    piglin.userData.velocity.set(0, 0, 0);
+    resetPiglin(piglin);
   });
 
   setStatus("Find the evil mount beyond the dunes.", 3);
   updateHud(0);
+}
+
+function resetPiglin(piglin) {
+  const spawn = piglin.userData.spawn;
+  piglin.position.set(spawn.x, groundY(spawn.x, spawn.z), spawn.z);
+  piglin.rotation.set(0, 0, 0);
+  piglin.visible = true;
+  piglin.userData.health = 1;
+  piglin.userData.stun = 0;
+  piglin.userData.respawn = 0;
+  piglin.userData.downTimer = 0;
+  piglin.userData.isDown = false;
+  piglin.userData.velocity.set(0, 0, 0);
+}
+
+function updateGoshaIndicator() {
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  const margin = width < 760 ? 58 : 72;
+  const target = mountGosha.position.clone();
+  target.y += 3.2;
+  target.project(camera);
+
+  let ndcX = target.x;
+  let ndcY = target.y;
+  const behindCamera = target.z > 1;
+
+  if (behindCamera) {
+    ndcX *= -1;
+    ndcY *= -1;
+  }
+
+  const onScreen =
+    !behindCamera && ndcX > -0.82 && ndcX < 0.82 && ndcY > -0.76 && ndcY < 0.76;
+
+  const unclampedX = (ndcX * 0.5 + 0.5) * width;
+  const unclampedY = (-ndcY * 0.5 + 0.5) * height;
+  const x = onScreen ? unclampedX : THREE.MathUtils.clamp(unclampedX, margin, width - margin);
+  const y = onScreen ? unclampedY : THREE.MathUtils.clamp(unclampedY, margin, height - margin);
+  const angle = Math.atan2(y - height / 2, x - width / 2) + Math.PI / 2;
+  const distance = player.position.distanceTo(mountGosha.position);
+
+  ui.goshaIndicator.style.left = `${x}px`;
+  ui.goshaIndicator.style.top = `${y}px`;
+  ui.goshaIndicator.classList.toggle("on-target", onScreen);
+  ui.goshaArrow.style.transform = `rotate(${angle}rad)`;
+  ui.goshaDistance.textContent = `${Math.max(1, Math.round(distance))}m`;
+}
+
+function getPlayerForward(target = new THREE.Vector3()) {
+  return target.set(-Math.sin(player.rotation.y), 0, -Math.cos(player.rotation.y)).normalize();
+}
+
+function getPlayerRight(target = new THREE.Vector3()) {
+  return target.set(Math.cos(player.rotation.y), 0, -Math.sin(player.rotation.y)).normalize();
+}
+
+function yawForDirection(direction) {
+  const flat = direction.clone();
+  flat.y = 0;
+  if (flat.lengthSq() < 0.0001) return player.rotation.y;
+  flat.normalize();
+  return Math.atan2(-flat.x, -flat.z);
+}
+
+function dampAngle(current, target, lambda, delta) {
+  const difference = Math.atan2(Math.sin(target - current), Math.cos(target - current));
+  return current + difference * (1 - Math.exp(-lambda * delta));
 }
 
 function cylinderBetween(start, end, radius, material) {

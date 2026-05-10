@@ -203,6 +203,51 @@ h1 {
   transform: translate(-50%, -50%) scale(1);
 }
 
+#goshaIndicator {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 2;
+  display: flex;
+  min-width: 96px;
+  height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(109, 246, 255, 0.48);
+  border-radius: 8px;
+  background: rgba(4, 13, 21, 0.72);
+  color: #e9fdff;
+  font-size: 0.76rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  line-height: 1;
+  text-transform: uppercase;
+  transform: translate(-50%, -50%);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 0 22px rgba(109, 246, 255, 0.22);
+}
+
+#goshaIndicator.on-target {
+  border-color: rgba(151, 255, 179, 0.62);
+  box-shadow: 0 0 26px rgba(151, 255, 179, 0.28);
+}
+
+#goshaArrow {
+  width: 15px;
+  height: 16px;
+  flex: 0 0 auto;
+  background: var(--cyan);
+  clip-path: polygon(50% 0, 100% 100%, 50% 74%, 0 100%);
+  filter: drop-shadow(0 0 8px rgba(109, 246, 255, 0.76));
+  transform-origin: 50% 50%;
+}
+
+#goshaDistance {
+  color: var(--gold);
+}
+
 .reticle {
   position: absolute;
   left: 50%;
@@ -230,6 +275,18 @@ h1 {
 
   #status {
     bottom: 148px;
+  }
+
+  #goshaIndicator {
+    min-width: 82px;
+    height: 36px;
+    padding: 7px 9px;
+    font-size: 0.68rem;
+  }
+
+  #goshaArrow {
+    width: 13px;
+    height: 14px;
   }
 
   .capture-meter {

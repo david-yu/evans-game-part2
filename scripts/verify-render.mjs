@@ -67,6 +67,8 @@ try {
       }
 
       const hud = document.querySelector("#hud").getBoundingClientRect();
+      const indicator = document.querySelector("#goshaIndicator").getBoundingClientRect();
+      const indicatorText = document.querySelector("#goshaIndicator").textContent.trim();
 
       return {
         ok: true,
@@ -74,6 +76,9 @@ try {
         canvasHeight: Math.round(rect.height),
         hudWidth: Math.round(hud.width),
         hudHeight: Math.round(hud.height),
+        indicatorWidth: Math.round(indicator.width),
+        indicatorHeight: Math.round(indicator.height),
+        indicatorText,
         brightRatio: bright / samples,
         coloredRatio: colored / samples,
         alphaRatio: alpha / samples,
@@ -86,9 +91,22 @@ try {
     await page.keyboard.down("w");
     await page.waitForTimeout(360);
     await page.keyboard.up("w");
+    await page.waitForTimeout(80);
+    const afterMoveState = await page.evaluate(() => window.__GOSHA_GAME_DEBUG__.state());
+
+    await page.keyboard.down("d");
+    await page.waitForTimeout(450);
+    await page.keyboard.up("d");
+    await page.waitForTimeout(80);
+    const afterTurnState = await page.evaluate(() => window.__GOSHA_GAME_DEBUG__.state());
+
+    const beforeHitState = await page.evaluate(() => {
+      window.__GOSHA_GAME_DEBUG__.placePiglinInSwordRange();
+      return window.__GOSHA_GAME_DEBUG__.state();
+    });
     await page.keyboard.press("Space");
-    await page.waitForTimeout(500);
-    const afterState = await page.evaluate(() => window.__GOSHA_GAME_DEBUG__.state());
+    await page.waitForTimeout(260);
+    const afterHitState = await page.evaluate(() => window.__GOSHA_GAME_DEBUG__.state());
     await page.close();
 
     if (!result.ok) {
@@ -97,6 +115,14 @@ try {
 
     if (result.canvasWidth < viewport.width * 0.95 || result.canvasHeight < viewport.height * 0.95) {
       throw new Error(`${viewport.name}: canvas is not filling the viewport`);
+    }
+
+    if (
+      result.indicatorWidth < 70 ||
+      result.indicatorHeight < 30 ||
+      !result.indicatorText.includes("Gosha")
+    ) {
+      throw new Error(`${viewport.name}: Mount Gosha indicator is missing or too small`);
     }
 
     if (result.brightRatio < 0.08 || result.coloredRatio < 0.04 || result.alphaRatio < 0.95) {
@@ -108,16 +134,41 @@ try {
     }
 
     const playerDelta = Math.hypot(
-      afterState.player.x - beforeState.player.x,
-      afterState.player.z - beforeState.player.z,
+      afterMoveState.player.x - beforeState.player.x,
+      afterMoveState.player.z - beforeState.player.z,
     );
     const mountDelta = Math.hypot(
-      afterState.mount.x - beforeState.mount.x,
-      afterState.mount.z - beforeState.mount.z,
+      afterMoveState.mount.x - beforeState.mount.x,
+      afterMoveState.mount.z - beforeState.mount.z,
     );
+    const turnDelta = Math.hypot(
+      afterTurnState.player.x - afterMoveState.player.x,
+      afterTurnState.player.z - afterMoveState.player.z,
+    );
+    const forwardYaw = normalizeAngle(afterMoveState.playerYaw);
+    const turnYaw = normalizeAngle(afterTurnState.playerYaw);
 
     if (playerDelta < 0.3) {
       throw new Error(`${viewport.name}: player did not respond to movement input`);
+    }
+
+    if (turnDelta < 0.3) {
+      throw new Error(`${viewport.name}: player did not respond to turn input`);
+    }
+
+    if (Math.abs(forwardYaw) > 0.55) {
+      throw new Error(`${viewport.name}: spider faces the wrong way when moving forward`);
+    }
+
+    if (Math.abs(turnYaw + Math.PI / 2) > 0.85) {
+      throw new Error(`${viewport.name}: spider does not turn to face right movement`);
+    }
+
+    if (
+      afterHitState.piglinsDefeated <= beforeHitState.piglinsDefeated ||
+      !afterHitState.firstPiglin.isDown
+    ) {
+      throw new Error(`${viewport.name}: sword hit did not take down the piglin`);
     }
 
     if (mountDelta < 0.02) {
@@ -129,9 +180,15 @@ try {
         3,
       )}, colored=${result.coloredRatio.toFixed(3)}, playerDelta=${playerDelta.toFixed(
         2,
-      )}, mountDelta=${mountDelta.toFixed(2)}, screenshot=${screenshotPath}`,
+      )}, turnYaw=${turnYaw.toFixed(2)}, swordHit=yes, mountDelta=${mountDelta.toFixed(
+        2,
+      )}, screenshot=${screenshotPath}`,
     );
   }
 } finally {
   await browser.close();
+}
+
+function normalizeAngle(angle) {
+  return Math.atan2(Math.sin(angle), Math.cos(angle));
 }
