@@ -102,6 +102,8 @@ try {
     await page.keyboard.up("d");
     await page.waitForTimeout(80);
     const afterTurnState = await page.evaluate(() => window.__GOSHA_GAME_DEBUG__.state());
+    await page.waitForTimeout(3600);
+    const afterCameraPanState = await page.evaluate(() => window.__GOSHA_GAME_DEBUG__.state());
 
     const beforeHitState = await page.evaluate(() => {
       window.__GOSHA_GAME_DEBUG__.placePiglinInSwordRange();
@@ -230,6 +232,9 @@ try {
     );
     const forwardYaw = normalizeAngle(afterMoveState.playerYaw);
     const turnYaw = normalizeAngle(afterTurnState.playerYaw);
+    const cameraYawDeltaDuringTurn = Math.abs(normalizeAngle(afterTurnState.cameraYaw - afterMoveState.cameraYaw));
+    const playerCameraGapDuringTurn = Math.abs(normalizeAngle(afterTurnState.playerYaw - afterTurnState.cameraYaw));
+    const playerCameraGapAfterPan = Math.abs(normalizeAngle(afterCameraPanState.playerYaw - afterCameraPanState.cameraYaw));
 
     if (playerDelta < 0.3) {
       throw new Error(`${viewport.name}: player did not respond to movement input`);
@@ -245,6 +250,14 @@ try {
 
     if (turnYaw > -0.38 || turnYaw < -0.95) {
       throw new Error(`${viewport.name}: Growlithe did not keep turning while right was held`);
+    }
+
+    if (cameraYawDeltaDuringTurn > 0.16 || playerCameraGapDuringTurn < 0.32) {
+      throw new Error(`${viewport.name}: camera did not hold still long enough for Growlithe to face it after turning`);
+    }
+
+    if (playerCameraGapAfterPan > 0.16 || playerCameraGapAfterPan >= playerCameraGapDuringTurn * 0.45) {
+      throw new Error(`${viewport.name}: camera did not pan back behind Growlithe after the turn hold`);
     }
 
     if (afterMoveState.maxLegLift < 0.03) {
@@ -363,7 +376,7 @@ try {
         3,
       )}, colored=${result.coloredRatio.toFixed(3)}, playerDelta=${playerDelta.toFixed(
         2,
-      )}, turnYaw=${turnYaw.toFixed(2)}, swordHit=yes, blockEffect=yes, rockDance=yes, goshaJump=yes, rocketEscape=yes, rocketReturn=yes, rocketSmoke=yes, asteroidCombat=yes, lavaHazards=yes, lavaFlow=yes, chickens=yes, mountDelta=${mountDelta.toFixed(
+      )}, turnYaw=${turnYaw.toFixed(2)}, cameraLag=yes, swordHit=yes, blockEffect=yes, rockDance=yes, goshaJump=yes, rocketEscape=yes, rocketReturn=yes, rocketSmoke=yes, asteroidCombat=yes, lavaHazards=yes, lavaFlow=yes, chickens=yes, mountDelta=${mountDelta.toFixed(
         2,
       )}, shoulderShield=yes, screenshot=${screenshotPath}`,
     );

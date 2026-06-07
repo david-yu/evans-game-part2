@@ -12,6 +12,7 @@ const yAxis = new THREE.Vector3(0, 1, 0);
 const rocketHome = new THREE.Vector3(-24, 0, -9);
 const destinationPlanetPosition = new THREE.Vector3(0, 62, -250);
 const originalPlanetPosition = new THREE.Vector3(0, 54, 230);
+const cameraTurnHoldSeconds = 2.2;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x050813);
@@ -78,6 +79,8 @@ const game = {
   danceTimer: 0,
   rocketFlame: 0,
   targetYaw: 0,
+  cameraYaw: 0,
+  cameraTurnHold: 0,
   maxLegLift: 0,
   blockFlashTimer: 0,
   lastBlockTime: 0,
@@ -492,6 +495,9 @@ window.__GOSHA_GAME_DEBUG__ = {
     },
     playerYaw: player.rotation.y,
     targetYaw: game.targetYaw,
+    cameraYaw: game.cameraYaw,
+    cameraTurnHold: game.cameraTurnHold,
+    playerFacingCameraAngle: normalizeAngle(player.rotation.y - game.cameraYaw),
     maxLegLift: game.maxLegLift,
     playerVisible: player.visible,
     mount: {
@@ -598,6 +604,7 @@ window.__GOSHA_GAME_DEBUG__ = {
     player.position.set(rocketHome.x + 1.8, getCurrentGroundY(rocketHome.x + 1.8, rocketHome.z), rocketHome.z);
     player.rotation.y = yawForDirection(rocket.position.clone().sub(player.position));
     game.targetYaw = player.rotation.y;
+    syncGameplayCameraToPlayer();
     playerVerticalVelocity = 0;
     player.userData.grounded = true;
     return window.__GOSHA_GAME_DEBUG__.state();
@@ -674,6 +681,7 @@ window.__GOSHA_GAME_DEBUG__ = {
     player.position.set(position.x, getCurrentGroundY(position.x, position.z), position.z);
     player.rotation.y = yawForDirection(chicken.position.clone().sub(player.position));
     game.targetYaw = player.rotation.y;
+    syncGameplayCameraToPlayer();
     player.userData.grounded = true;
     playerVerticalVelocity = 0;
     return window.__GOSHA_GAME_DEBUG__.state();
@@ -705,6 +713,7 @@ window.__GOSHA_GAME_DEBUG__ = {
     player.position.set(rocket.position.x + 1.8, getCurrentGroundY(rocket.position.x + 1.8, rocket.position.z), rocket.position.z);
     player.rotation.y = yawForDirection(rocket.position.clone().sub(player.position));
     game.targetYaw = player.rotation.y;
+    syncGameplayCameraToPlayer();
     player.userData.grounded = true;
     playerVerticalVelocity = 0;
     return window.__GOSHA_GAME_DEBUG__.state();
@@ -2315,6 +2324,7 @@ function updatePlayer(delta) {
 
   if (turnInput !== 0 && game.danceTimer <= 0) {
     game.targetYaw = normalizeAngle(game.targetYaw + turnInput * (Math.PI / 12) * 4 * delta);
+    holdGameplayCamera();
   }
 
   player.rotation.y = dampAngle(player.rotation.y, game.targetYaw, 8, delta);
@@ -2387,6 +2397,7 @@ function updatePlayer(delta) {
 function queuePlayerTurn(direction) {
   if (game.phase === "launching" || game.phase === "space" || game.danceTimer > 0) return;
   game.targetYaw = normalizeAngle(game.targetYaw + direction * (Math.PI / 12));
+  holdGameplayCamera();
 }
 
 function updateGrowlitheDance(delta) {
@@ -3839,6 +3850,7 @@ function landOnNewPlanet() {
   player.position.set(0, planetHeight(0, 12), 12);
   player.rotation.y = 0;
   game.targetYaw = 0;
+  syncGameplayCameraToPlayer();
   player.userData.grounded = true;
   playerVerticalVelocity = 0;
   rocket.position.set(8, planetHeight(8, 20), 20);
@@ -3867,6 +3879,7 @@ function landBackOnDesert() {
   player.position.set(rocketHome.x + 3.6, groundY(rocketHome.x + 3.6, rocketHome.z + 1.2), rocketHome.z + 1.2);
   player.rotation.y = yawForDirection(rocket.position.clone().sub(player.position));
   game.targetYaw = player.rotation.y;
+  syncGameplayCameraToPlayer();
   player.userData.grounded = true;
   playerVerticalVelocity = 0;
   rocket.position.copy(rocketHome);
@@ -3945,7 +3958,8 @@ function updateCamera(delta, elapsed) {
     return;
   }
 
-  const cameraOffset = new THREE.Vector3(0, 5.8, 10.8).applyAxisAngle(yAxis, player.rotation.y);
+  const cameraYaw = updateGameplayCameraYaw(delta);
+  const cameraOffset = new THREE.Vector3(0, 5.8, 10.8).applyAxisAngle(yAxis, cameraYaw);
   const desired = player.position.clone().add(cameraOffset);
   desired.y = Math.max(desired.y, getCurrentGroundY(desired.x, desired.z) + 3.2);
 
@@ -3959,6 +3973,30 @@ function updateCamera(delta, elapsed) {
   camera.position.lerp(desired, 1 - Math.pow(0.001, delta));
   const lookAt = player.position.clone().add(new THREE.Vector3(0, 1.8, 0));
   camera.lookAt(lookAt);
+}
+
+function holdGameplayCamera() {
+  if (game.phase !== "desert" && game.phase !== "planet") return;
+  game.cameraTurnHold = Math.max(game.cameraTurnHold, cameraTurnHoldSeconds);
+}
+
+function updateGameplayCameraYaw(delta) {
+  if (!Number.isFinite(game.cameraYaw)) {
+    game.cameraYaw = player.rotation.y;
+  }
+
+  if (game.cameraTurnHold > 0) {
+    game.cameraTurnHold = Math.max(0, game.cameraTurnHold - delta);
+    return game.cameraYaw;
+  }
+
+  game.cameraYaw = dampAngle(game.cameraYaw, player.rotation.y, 2.45, delta);
+  return game.cameraYaw;
+}
+
+function syncGameplayCameraToPlayer() {
+  game.cameraYaw = player.rotation.y;
+  game.cameraTurnHold = 0;
 }
 
 function updateHud(delta) {
@@ -4341,6 +4379,7 @@ function resetGame() {
   player.position.set(0, groundY(0, 8), 8);
   player.rotation.y = 0;
   game.targetYaw = 0;
+  syncGameplayCameraToPlayer();
   player.visible = true;
   player.userData.grounded = true;
   playerVelocity.set(0, 0, 0);
