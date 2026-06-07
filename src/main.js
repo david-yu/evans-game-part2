@@ -34,12 +34,17 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.06;
 document.querySelector("#app").appendChild(renderer.domElement);
 
+const textureLoader = new THREE.TextureLoader();
+const pokeballTexture = textureLoader.load(`${import.meta.env.BASE_URL}pokeball.avif`);
+pokeballTexture.colorSpace = THREE.SRGBColorSpace;
+
 const ui = {
   healthFill: document.querySelector("#healthFill"),
   healthText: document.querySelector("#healthText"),
   captureFill: document.querySelector("#captureFill"),
   captureText: document.querySelector("#captureText"),
   piglinScore: document.querySelector("#piglinScore"),
+  pokeballScore: document.querySelector("#pokeballScore"),
   status: document.querySelector("#status"),
   capturePrompt: document.querySelector("#capturePrompt"),
   rocketPrompt: document.querySelector("#rocketPrompt"),
@@ -59,6 +64,7 @@ const game = {
   health: 100,
   capture: 0,
   piglinsDefeated: 0,
+  pokeballsCollected: 0,
   chickensEaten: 0,
   won: false,
   lost: false,
@@ -81,6 +87,12 @@ const game = {
   chickenPassenger: false,
   returnedChicken: false,
   lavaSpewCount: 0,
+  dragonActive: false,
+  dragonFireTimer: 0,
+  chickensScorched: 0,
+  capturePokemonSpawned: false,
+  capturePokemonCaptured: false,
+  companionCapturePower: 0,
 };
 
 const materials = {
@@ -275,6 +287,97 @@ const materials = {
     emissiveIntensity: 0.9,
     roughness: 0.3,
   }),
+  dragonRed: new THREE.MeshStandardMaterial({
+    color: 0xb62222,
+    emissive: 0x4f0808,
+    emissiveIntensity: 0.34,
+    roughness: 0.52,
+    metalness: 0.08,
+  }),
+  dragonBelly: new THREE.MeshStandardMaterial({
+    color: 0xffa25b,
+    emissive: 0x5f1c07,
+    emissiveIntensity: 0.42,
+    roughness: 0.58,
+  }),
+  dragonWing: new THREE.MeshStandardMaterial({
+    color: 0x8c1018,
+    emissive: 0x3a0305,
+    emissiveIntensity: 0.45,
+    roughness: 0.45,
+    side: THREE.DoubleSide,
+  }),
+  dragonEye: new THREE.MeshBasicMaterial({
+    color: 0xfff27a,
+  }),
+  fireball: new THREE.MeshBasicMaterial({
+    color: 0xff661d,
+    transparent: true,
+    opacity: 0.92,
+    depthWrite: false,
+  }),
+  fireballCore: new THREE.MeshBasicMaterial({
+    color: 0xfff1a3,
+    transparent: true,
+    opacity: 0.86,
+    depthWrite: false,
+  }),
+  firebird: new THREE.MeshStandardMaterial({
+    color: 0xf4c64f,
+    emissive: 0xd94c11,
+    emissiveIntensity: 0.55,
+    roughness: 0.42,
+  }),
+  firebirdShade: new THREE.MeshStandardMaterial({
+    color: 0xd99425,
+    emissive: 0x713000,
+    emissiveIntensity: 0.32,
+    roughness: 0.56,
+  }),
+  firebirdWing: new THREE.MeshBasicMaterial({
+    color: 0xffc45a,
+    transparent: true,
+    opacity: 0.84,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  }),
+  firebirdFlame: new THREE.MeshBasicMaterial({
+    color: 0xff3d18,
+    transparent: true,
+    opacity: 0.88,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  }),
+  firebirdFlameHot: new THREE.MeshBasicMaterial({
+    color: 0xffef87,
+    transparent: true,
+    opacity: 0.72,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  }),
+  firebirdTalon: new THREE.MeshStandardMaterial({
+    color: 0x6e4631,
+    roughness: 0.62,
+    metalness: 0.12,
+  }),
+  capturePokemon: new THREE.MeshStandardMaterial({
+    color: 0x8de7ff,
+    emissive: 0x1d8ac9,
+    emissiveIntensity: 0.55,
+    roughness: 0.36,
+  }),
+  capturePokemonBelly: new THREE.MeshStandardMaterial({
+    color: 0xfff3b7,
+    emissive: 0x7b4b18,
+    emissiveIntensity: 0.28,
+    roughness: 0.58,
+  }),
+  captureSpark: new THREE.MeshBasicMaterial({
+    color: 0x97ffb3,
+    transparent: true,
+    opacity: 0.88,
+    depthWrite: false,
+  }),
 };
 
 let player;
@@ -290,6 +393,8 @@ let originalPlanet;
 let planetSurface;
 let desertChicken;
 let rocketChickenPassenger;
+let redDragon;
+let capturePokemon;
 const piglins = [];
 const chickens = [];
 const lavaRivers = [];
@@ -301,6 +406,9 @@ const impactBursts = [];
 const smokePuffs = [];
 const damageNumbers = [];
 const lavaBombs = [];
+const dragonFireballs = [];
+const firebirds = [];
+const pokeballs = [];
 let playerVerticalVelocity = 0;
 
 setupLighting();
@@ -321,6 +429,9 @@ desertChicken.visible = false;
 scene.add(desertChicken);
 player = createGrowlitheJockey();
 scene.add(player);
+capturePokemon = createCapturePokemon();
+capturePokemon.visible = false;
+scene.add(capturePokemon);
 mountGosha = createMountGosha();
 scene.add(mountGosha);
 captureRing = createCaptureRing();
@@ -372,11 +483,23 @@ window.__GOSHA_GAME_DEBUG__ = {
     won: game.won,
     danceTimer: game.danceTimer,
     piglinsDefeated: game.piglinsDefeated,
+    pokeballsCollected: game.pokeballsCollected,
     piglinsVisible: piglins.filter((piglin) => piglin.visible).length,
     chickensEaten: game.chickensEaten,
     chickensVisible: chickens.filter((chicken) => chicken.visible && !chicken.userData.eaten).length,
     lavaRivers: lavaRivers.length,
     volcanoes: volcanoes.length,
+    dragonActive: game.dragonActive,
+    dragonVisible: Boolean(redDragon?.visible),
+    dragonFireballs: dragonFireballs.length,
+    firebirdsVisible: firebirds.length,
+    pokeballsVisible: pokeballs.length,
+    chickensScorched: game.chickensScorched,
+    chickensTransformed: game.chickensScorched,
+    capturePokemonSpawned: game.capturePokemonSpawned,
+    capturePokemonCaptured: game.capturePokemonCaptured,
+    capturePokemonVisible: Boolean(capturePokemon?.visible),
+    companionCapturePower: game.companionCapturePower,
     hasShoulderShield: Boolean(player.getObjectByName("Spiked Shoulder Shield")),
     firstPiglin: {
       visible: piglins[0].visible,
@@ -529,8 +652,12 @@ window.addEventListener("keydown", (event) => {
   if (event.code === "KeyF") {
     swingSword();
   }
-  if (event.code === "KeyE" && game.phase === "planet") {
-    eatNearestChicken();
+  if (event.code === "KeyE") {
+    if (captureNearestPokeball()) return;
+    if (tryCapturePokemon()) return;
+    if (game.phase === "planet") {
+      eatNearestChicken();
+    }
   }
   if (event.code === "KeyR") {
     resetGame();
@@ -545,7 +672,10 @@ window.addEventListener("pointerdown", (event) => {
   }
   swingSword();
 });
-ui.restartButton.addEventListener("click", resetGame);
+ui.restartButton.addEventListener("click", () => {
+  resetGame();
+  ui.restartButton.blur();
+});
 
 animate();
 
@@ -904,6 +1034,9 @@ function createPlanetSurface() {
 
   spawnPlanetChickens(group);
   createPlanetHazards(group);
+  redDragon = createRedDragon();
+  redDragon.visible = false;
+  group.add(redDragon);
 
   planetObjects.push(group);
   return group;
@@ -1110,6 +1243,420 @@ function createChicken(index) {
     speed: THREE.MathUtils.randFloat(0.65, 1.1),
     peckTimer: THREE.MathUtils.randFloat(0.2, 1.4),
     eaten: false,
+  };
+
+  return group;
+}
+
+function createRedDragon() {
+  const group = new THREE.Group();
+  group.name = "Red Chicken-Hunting Dragon";
+  group.scale.setScalar(1.04);
+
+  const body = new THREE.Mesh(new THREE.SphereGeometry(1.1, 28, 16), materials.dragonRed);
+  body.name = "Dragon Body";
+  body.scale.set(1.15, 0.72, 2.05);
+  body.castShadow = true;
+  group.add(body);
+
+  const belly = new THREE.Mesh(new THREE.SphereGeometry(0.64, 18, 12), materials.dragonBelly);
+  belly.scale.set(0.72, 0.34, 1.58);
+  belly.position.set(0, -0.28, -0.34);
+  belly.castShadow = true;
+  group.add(belly);
+
+  const neck = cylinderBetween(
+    new THREE.Vector3(0, 0.28, -1.42),
+    new THREE.Vector3(0, 0.62, -2.2),
+    0.28,
+    materials.dragonRed,
+  );
+  group.add(neck);
+
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.62, 22, 14), materials.dragonRed);
+  head.name = "Dragon Head";
+  head.scale.set(0.95, 0.78, 1.08);
+  head.position.set(0, 0.72, -2.78);
+  head.castShadow = true;
+  group.add(head);
+
+  const snout = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.34, 0.72), materials.dragonBelly);
+  snout.position.set(0, 0.6, -3.2);
+  snout.castShadow = true;
+  group.add(snout);
+
+  [-0.25, 0.25].forEach((x) => {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.075, 10, 8), materials.dragonEye);
+    eye.position.set(x, 0.84, -3.18);
+    eye.scale.z = 0.36;
+    group.add(eye);
+
+    const horn = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.48, 8), materials.shieldSpike);
+    horn.position.set(x * 1.25, 1.12, -2.76);
+    horn.rotation.set(-0.5, x > 0 ? -0.28 : 0.28, x > 0 ? -0.22 : 0.22);
+    horn.castShadow = true;
+    group.add(horn);
+  });
+
+  const tail = new THREE.Mesh(new THREE.ConeGeometry(0.34, 3.2, 14), materials.dragonRed);
+  tail.position.set(0, 0.02, 2.88);
+  tail.rotation.x = Math.PI / 2;
+  tail.castShadow = true;
+  group.add(tail);
+
+  [-0.56, 0.56].forEach((x) => {
+    const claw = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.56, 8), materials.shieldSpike);
+    claw.position.set(x, -0.72, -1.06);
+    claw.rotation.x = -Math.PI;
+    claw.castShadow = true;
+    group.add(claw);
+  });
+
+  const leftWing = createDragonWing(-1, 4.8, materials.dragonWing);
+  const rightWing = createDragonWing(1, 4.8, materials.dragonWing);
+  group.add(leftWing, rightWing);
+
+  const mouth = new THREE.Object3D();
+  mouth.name = "Dragon Fire Mouth";
+  mouth.position.set(0, 0.55, -3.62);
+  group.add(mouth);
+
+  const throatGlow = new THREE.PointLight(0xff5c1d, 1.35, 15);
+  throatGlow.position.copy(mouth.position);
+  group.add(throatGlow);
+
+  group.userData = {
+    base: new THREE.Vector3(-16, planetHeight(-16, -16) + 8.4, -16),
+    mouth,
+    leftWing,
+    rightWing,
+    throatGlow,
+    orbitAngle: 0,
+  };
+
+  return group;
+}
+
+function createDragonWing(side, span, material) {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute(
+    "position",
+    new THREE.Float32BufferAttribute(
+      [
+        side * 0.42, 0.08, -0.85,
+        side * span, -0.36, -2.05,
+        side * (span * 0.74), -0.62, 1.58,
+        side * 0.62, -0.16, 0.86,
+      ],
+      3,
+    ),
+  );
+  geometry.setIndex([0, 1, 2, 0, 2, 3]);
+  geometry.computeVertexNormals();
+
+  const wing = new THREE.Mesh(geometry, material);
+  wing.name = side < 0 ? "Left Dragon Wing" : "Right Dragon Wing";
+  wing.castShadow = true;
+  wing.userData.side = side;
+  return wing;
+}
+
+function createFirebird(index) {
+  const group = new THREE.Group();
+  group.name = `Moltres-Like Firebird ${index + 1}`;
+  group.scale.setScalar(1.3);
+  const flameParts = [];
+
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.62, 30, 18), materials.firebird);
+  body.name = "Golden Moltres Body";
+  body.scale.set(0.82, 1.08, 1.56);
+  body.position.set(0, 0.02, 0.04);
+  body.castShadow = true;
+  group.add(body);
+
+  const chest = new THREE.Mesh(new THREE.SphereGeometry(0.43, 20, 12), materials.firebirdShade);
+  chest.name = "Warm Chest Plume";
+  chest.scale.set(0.72, 0.72, 1.18);
+  chest.position.set(0, -0.2, -0.48);
+  chest.castShadow = true;
+  group.add(chest);
+
+  const neck = cylinderBetween(
+    new THREE.Vector3(0, 0.36, -0.56),
+    new THREE.Vector3(0, 0.9, -0.98),
+    0.19,
+    materials.firebird,
+  );
+  neck.name = "Long Golden Neck";
+  group.add(neck);
+
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.34, 22, 14), materials.firebird);
+  head.name = "Sharp Moltres Head";
+  head.scale.set(0.82, 0.86, 1.18);
+  head.position.set(0, 1.02, -1.22);
+  head.castShadow = true;
+  group.add(head);
+
+  const brow = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.055, 0.12), materials.firebirdShade);
+  brow.name = "Angled Eye Brow";
+  brow.position.set(0, 1.12, -1.52);
+  brow.rotation.x = -0.08;
+  brow.castShadow = true;
+  group.add(brow);
+
+  const beak = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.82, 10), materials.firebirdTalon);
+  beak.name = "Long Hooked Beak";
+  beak.position.set(0, 0.96, -1.72);
+  beak.rotation.x = -Math.PI / 2;
+  beak.scale.set(0.7, 1, 1.42);
+  beak.castShadow = true;
+  group.add(beak);
+
+  const lowerBeak = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.44, 9), materials.firebirdShade);
+  lowerBeak.name = "Lower Beak";
+  lowerBeak.position.set(0, 0.86, -1.62);
+  lowerBeak.rotation.x = -Math.PI / 2;
+  lowerBeak.scale.set(0.68, 1, 0.92);
+  group.add(lowerBeak);
+
+  [-0.135, 0.135].forEach((x) => {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.055, 10, 8), materials.dragonEye);
+    eye.name = "Bright Moltres Eye";
+    eye.position.set(x, 1.08, -1.52);
+    eye.scale.set(1, 0.82, 0.34);
+    group.add(eye);
+  });
+
+  [
+    [0, 1.52, -1.18, 0.19, 1.02, -0.36, 0],
+    [-0.14, 1.38, -1.12, 0.13, 0.78, -0.46, -0.34],
+    [0.14, 1.38, -1.12, 0.13, 0.78, -0.46, 0.34],
+    [0, 1.26, -0.98, 0.12, 0.62, -0.76, 0],
+  ].forEach(([x, y, z, radius, height, pitch, roll]) => {
+    const crest = createFlameFeather(radius, height, materials.firebirdFlameHot);
+    crest.name = "Layered Head Flame";
+    crest.position.set(x, y, z);
+    crest.rotation.set(pitch, 0, roll);
+    group.add(crest);
+    flameParts.push(crest);
+  });
+
+  const leftWing = createFirebirdWing(-1);
+  const rightWing = createFirebirdWing(1);
+  group.add(leftWing, rightWing);
+  flameParts.push(...leftWing.userData.flameParts, ...rightWing.userData.flameParts);
+
+  [
+    [0, -0.18, 1.22, 0.24, 1.72, Math.PI / 2.28, 0],
+    [-0.24, -0.12, 1.1, 0.18, 1.38, Math.PI / 2.2, -0.22],
+    [0.24, -0.12, 1.1, 0.18, 1.38, Math.PI / 2.2, 0.22],
+    [-0.42, -0.2, 0.96, 0.14, 1.1, Math.PI / 2.12, -0.44],
+    [0.42, -0.2, 0.96, 0.14, 1.1, Math.PI / 2.12, 0.44],
+  ].forEach(([x, y, z, radius, height, pitch, roll]) => {
+    const tail = createFlameFeather(radius, height, materials.firebirdFlame);
+    tail.name = "Flowing Tail Fire";
+    tail.position.set(x, y, z);
+    tail.rotation.set(pitch, 0, roll);
+    group.add(tail);
+    flameParts.push(tail);
+  });
+
+  [-0.22, 0.22].forEach((x) => {
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.055, 0.44, 8), materials.firebirdTalon);
+    leg.position.set(x, -0.62, -0.12);
+    leg.rotation.x = -0.1;
+    leg.castShadow = true;
+    group.add(leg);
+
+    [-0.1, 0, 0.1].forEach((clawOffset) => {
+      const claw = new THREE.Mesh(new THREE.ConeGeometry(0.034, 0.28, 8), materials.firebirdTalon);
+      claw.position.set(x + clawOffset, -0.86, -0.3);
+      claw.rotation.x = -Math.PI / 2.35;
+      claw.rotation.z = clawOffset * -1.7;
+      claw.castShadow = true;
+      group.add(claw);
+    });
+  });
+
+  const glow = new THREE.PointLight(0xff6a1c, 1.55, 15);
+  group.add(glow);
+
+  group.userData = {
+    velocity: new THREE.Vector3(),
+    attackCooldown: THREE.MathUtils.randFloat(0.1, 0.7),
+    flapOffset: index * Math.PI,
+    side: index === 0 ? -1 : 1,
+    leftWing,
+    rightWing,
+    flameParts,
+  };
+
+  return group;
+}
+
+function createFirebirdWing(side) {
+  const group = new THREE.Group();
+  group.name = side < 0 ? "Left Realistic Flame Wing" : "Right Realistic Flame Wing";
+  const flameParts = [];
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute(
+    "position",
+    new THREE.Float32BufferAttribute(
+      [
+        side * 0.32, 0.26, -0.34,
+        side * 2.15, 0.62, -1.18,
+        side * 3.18, 0.26, -0.34,
+        side * 2.86, -0.16, 0.62,
+        side * 1.52, -0.3, 1.08,
+        side * 0.42, -0.08, 0.52,
+      ],
+      3,
+    ),
+  );
+  geometry.setIndex([0, 1, 5, 1, 2, 4, 1, 4, 5, 2, 3, 4]);
+  geometry.computeVertexNormals();
+
+  const membrane = new THREE.Mesh(geometry, materials.firebirdWing);
+  membrane.name = "Layered Golden Wing Membrane";
+  membrane.castShadow = false;
+  group.add(membrane);
+
+  [
+    [0.62, 0.08, 0.22, 0.06],
+    [1.18, 0.08, 0.0, 0.055],
+    [1.82, 0.05, -0.18, 0.05],
+    [2.42, -0.02, -0.08, 0.045],
+  ].forEach(([x, y, z, radius]) => {
+    const bone = cylinderBetween(
+      new THREE.Vector3(side * 0.18, 0.18, -0.2),
+      new THREE.Vector3(side * x, y, z),
+      radius,
+      materials.firebirdShade,
+    );
+    bone.name = "Wing Feather Rib";
+    group.add(bone);
+  });
+
+  [
+    [1.0, -0.18, 0.74, 0.18, 0.9, 0.52],
+    [1.48, -0.28, 0.86, 0.18, 1.02, 0.32],
+    [1.98, -0.26, 0.72, 0.17, 1.08, 0.08],
+    [2.45, -0.18, 0.36, 0.16, 1.02, -0.16],
+    [2.86, 0.0, -0.18, 0.16, 0.96, -0.42],
+  ].forEach(([x, y, z, radius, height, roll]) => {
+    const feather = createFlameFeather(radius, height, materials.firebird);
+    feather.name = "Golden Primary Feather";
+    feather.position.set(side * x, y, z);
+    feather.rotation.set(Math.PI / 2.45, 0, side * roll);
+    feather.scale.x = 0.72;
+    group.add(feather);
+  });
+
+  [
+    [2.28, 0.18, -1.02, 0.15, 0.95, -0.7],
+    [2.88, -0.02, -0.48, 0.21, 1.2, -0.36],
+    [2.78, -0.24, 0.2, 0.2, 1.2, -0.02],
+    [2.18, -0.34, 0.82, 0.17, 1.0, 0.28],
+    [1.42, -0.32, 1.14, 0.14, 0.82, 0.56],
+  ].forEach(([x, y, z, radius, height, roll], flameIndex) => {
+    const flame = createFlameFeather(radius, height, flameIndex % 2 === 0 ? materials.firebirdFlameHot : materials.firebirdFlame);
+    flame.name = "Animated Wing Flame";
+    flame.position.set(side * x, y, z);
+    flame.rotation.set(Math.PI / 2.55, 0, side * roll);
+    group.add(flame);
+    flameParts.push(flame);
+  });
+
+  group.userData.side = side;
+  group.userData.flameParts = flameParts;
+  return group;
+}
+
+function createFlameFeather(radius, height, material) {
+  const flame = new THREE.Mesh(new THREE.ConeGeometry(radius, height, 9), material);
+  flame.castShadow = false;
+  flame.userData.baseScale = new THREE.Vector3(1, 1, 1);
+  flame.userData.flickerOffset = THREE.MathUtils.randFloat(0, Math.PI * 2);
+  return flame;
+}
+
+function createCapturePokemon() {
+  const group = new THREE.Group();
+  group.name = "Capturable Helper Pokemon";
+
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.54, 24, 16), materials.capturePokemon);
+  body.name = "Helper Pokemon Body";
+  body.scale.set(0.82, 0.86, 1.18);
+  body.position.y = 0.66;
+  body.castShadow = true;
+  group.add(body);
+
+  const belly = new THREE.Mesh(new THREE.SphereGeometry(0.34, 16, 10), materials.capturePokemonBelly);
+  belly.scale.set(0.66, 0.52, 0.82);
+  belly.position.set(0, 0.55, -0.26);
+  belly.castShadow = true;
+  group.add(belly);
+
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.38, 20, 14), materials.capturePokemon);
+  head.name = "Helper Pokemon Head";
+  head.position.set(0, 1.1, -0.55);
+  head.castShadow = true;
+  group.add(head);
+
+  const snout = new THREE.Mesh(new THREE.SphereGeometry(0.18, 12, 8), materials.capturePokemonBelly);
+  snout.scale.set(0.9, 0.62, 0.76);
+  snout.position.set(0, 1.02, -0.88);
+  snout.castShadow = true;
+  group.add(snout);
+
+  [-0.16, 0.16].forEach((x) => {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 6), materials.dragonEye);
+    eye.position.set(x, 1.16, -0.9);
+    eye.scale.z = 0.38;
+    group.add(eye);
+
+    const ear = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.48, 5), materials.capturePokemon);
+    ear.position.set(x * 1.65, 1.43, -0.5);
+    ear.rotation.set(0.22, x > 0 ? -0.26 : 0.26, x > 0 ? -0.54 : 0.54);
+    ear.castShadow = true;
+    group.add(ear);
+  });
+
+  [-0.22, 0.22].forEach((x) => {
+    const foot = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 8), materials.capturePokemonBelly);
+    foot.scale.set(1.15, 0.42, 0.86);
+    foot.position.set(x, 0.16, -0.1);
+    foot.castShadow = true;
+    group.add(foot);
+  });
+
+  const tail = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.06, 8, 24, Math.PI * 1.35), materials.capturePokemon);
+  tail.name = "Capture Tail";
+  tail.position.set(0, 0.78, 0.62);
+  tail.rotation.set(0.2, Math.PI / 2, 0.55);
+  tail.castShadow = true;
+  group.add(tail);
+
+  const sparkAnchor = new THREE.Group();
+  sparkAnchor.name = "Capture Spark Ring";
+  sparkAnchor.position.y = 1.18;
+  for (let i = 0; i < 10; i += 1) {
+    const spark = new THREE.Mesh(new THREE.TetrahedronGeometry(0.07, 0), materials.captureSpark);
+    const angle = (i / 10) * Math.PI * 2;
+    spark.position.set(Math.sin(angle) * 0.72, Math.sin(i * 1.7) * 0.12, Math.cos(angle) * 0.72);
+    spark.userData.angle = angle;
+    spark.castShadow = false;
+    sparkAnchor.add(spark);
+  }
+  group.add(sparkAnchor);
+
+  group.userData = {
+    captured: false,
+    captureReady: false,
+    bobOffset: THREE.MathUtils.randFloat(0, Math.PI * 2),
+    sparkAnchor,
+    followVelocity: new THREE.Vector3(),
   };
 
   return group;
@@ -1615,6 +2162,8 @@ function createPiglin(index, x, z) {
     isDown: false,
     isBlocking: false,
     forceBlocking: false,
+    fleeing: false,
+    fleeTimer: 0,
     blockCooldown: THREE.MathUtils.randFloat(0.6, 1.8),
     attackCooldown: THREE.MathUtils.randFloat(0.1, 1.2),
     speed: THREE.MathUtils.randFloat(3.0, 4.4),
@@ -1651,9 +2200,12 @@ function animate() {
     if (game.phase === "desert" && !game.won) {
       updatePiglins(delta);
       updateCapture(delta);
+    } else if (game.phase === "desert") {
+      updateFleeingPiglins(delta);
     } else if (game.phase === "planet") {
       updateChickens(delta);
       updatePlanetHazards(delta);
+      updateDragonEncounter(delta);
     }
   } else {
     updateIdlePlayer(delta);
@@ -1661,6 +2213,10 @@ function animate() {
 
   updateMount(elapsed);
   updateRocket(delta, elapsed);
+  if (game.phase === "desert" || game.phase === "planet") {
+    updateCapturePokemon(delta);
+    updatePokeballs(delta);
+  }
   updateEffects(delta);
   updateCamera(delta, elapsed);
   updateHud(delta);
@@ -1675,20 +2231,24 @@ function updatePlayer(delta) {
     (keys.get("KeyA") || keys.get("ArrowLeft") ? 1 : 0) -
     (keys.get("KeyD") || keys.get("ArrowRight") ? 1 : 0);
 
-  if (turnInput !== 0 && game.danceTimer <= 0 && !game.won) {
+  if (turnInput !== 0 && game.danceTimer <= 0) {
     game.targetYaw = normalizeAngle(game.targetYaw + turnInput * (Math.PI / 12) * 4 * delta);
   }
 
   player.rotation.y = dampAngle(player.rotation.y, game.targetYaw, 8, delta);
 
   const hasMovement = forwardInput !== 0;
-  if (hasMovement && game.danceTimer <= 0 && !game.won) {
+  if (hasMovement && game.danceTimer <= 0) {
     const speed = (keys.get("ShiftLeft") || keys.get("ShiftRight") ? 14 : 9.2) * forwardInput;
     const forward = getPlayerForward(tempVec);
     playerVelocity.lerp(forward.multiplyScalar(speed), 0.16);
     player.userData.walkCycle += delta * playerVelocity.length() * 1.4;
   } else {
-    playerVelocity.lerp(tempVec.set(0, 0, 0), 0.16);
+    if (turnInput !== 0) {
+      playerVelocity.set(0, 0, 0);
+    } else {
+      playerVelocity.lerp(tempVec.set(0, 0, 0), 0.16);
+    }
   }
 
   player.position.addScaledVector(playerVelocity, delta);
@@ -1743,7 +2303,7 @@ function updatePlayer(delta) {
 }
 
 function queuePlayerTurn(direction) {
-  if (game.phase === "launching" || game.phase === "space" || game.danceTimer > 0 || game.won) return;
+  if (game.phase === "launching" || game.phase === "space" || game.danceTimer > 0) return;
   game.targetYaw = normalizeAngle(game.targetYaw + direction * (Math.PI / 12));
 }
 
@@ -1898,15 +2458,63 @@ function startRockDance() {
 
 function captureMountByJump() {
   game.capture = 100;
-  game.won = true;
   player.position.set(mountGosha.position.x, mountGosha.position.y + 4.2, mountGosha.position.z);
   playerVerticalVelocity = 0;
   player.userData.grounded = true;
+  completeMountGoshaCapture("You jumped onto Mount Gosha and captured it. The piglins scatter.");
+}
+
+function completeMountGoshaCapture(message) {
+  if (game.won) return;
+
+  game.capture = 100;
+  game.won = true;
   game.cameraShake = Math.max(game.cameraShake, 0.16);
-  setStatus("You jumped onto Mount Gosha and captured it.", 20);
+  setStatus(message, 8);
   mountGosha.children.forEach((child) => {
     if (child.material?.emissive) {
       child.material.emissive.setHex(0x14f7ff);
+    }
+  });
+  scatterPiglinsFromGosha();
+}
+
+function scatterPiglinsFromGosha() {
+  piglins.forEach((piglin, index) => {
+    if (!piglin.visible) return;
+
+    const away = piglin.position.clone().sub(player.position);
+    away.y = 0;
+    if (away.lengthSq() < 0.001) {
+      away.set(Math.sin(index), 0, Math.cos(index));
+    }
+    away.normalize();
+    piglin.userData.fleeing = true;
+    piglin.userData.fleeTimer = THREE.MathUtils.randFloat(1.4, 2.35);
+    piglin.userData.velocity.copy(away).multiplyScalar(THREE.MathUtils.randFloat(16, 24));
+    piglin.userData.velocity.y = THREE.MathUtils.randFloat(8, 13);
+    piglin.userData.isBlocking = false;
+    piglin.userData.forceBlocking = false;
+    piglin.rotation.x = 0;
+    piglin.rotation.z = 0;
+  });
+}
+
+function updateFleeingPiglins(delta) {
+  piglins.forEach((piglin, index) => {
+    const data = piglin.userData;
+    if (!data.fleeing || !piglin.visible) return;
+
+    data.fleeTimer -= delta;
+    data.velocity.y -= 8.5 * delta;
+    piglin.position.addScaledVector(data.velocity, delta);
+    piglin.rotation.x += delta * (3.2 + index * 0.18);
+    piglin.rotation.z += delta * (2.2 + index * 0.15);
+    data.velocity.multiplyScalar(0.985);
+
+    if (data.fleeTimer <= 0 || piglin.position.y < groundY(piglin.position.x, piglin.position.z) - 3) {
+      piglin.visible = false;
+      data.fleeing = false;
     }
   });
 }
@@ -2097,6 +2705,408 @@ function updatePlanetHazards(delta) {
   }
 }
 
+function startDragonEncounter() {
+  clearDragonFireballs();
+  clearFirebirds();
+  game.dragonActive = true;
+  game.dragonFireTimer = 1.8;
+  game.chickensScorched = 0;
+
+  if (redDragon) {
+    redDragon.visible = true;
+    redDragon.position.copy(redDragon.userData.base);
+    redDragon.rotation.set(0, 0, 0);
+    redDragon.scale.setScalar(1.04);
+  }
+}
+
+function stopDragonEncounter() {
+  game.dragonActive = false;
+  game.dragonFireTimer = 0;
+  if (redDragon) {
+    redDragon.visible = false;
+  }
+  clearDragonFireballs();
+  clearFirebirds();
+  clearPokeballs();
+}
+
+function updateDragonEncounter(delta) {
+  if (game.phase !== "planet" || !game.dragonActive) return;
+
+  updateDragonFireballs(delta);
+
+  if (redDragon?.visible) {
+    updateRedDragon(delta);
+    game.dragonFireTimer -= delta;
+
+    if (game.dragonFireTimer <= 0) {
+      spawnDragonFireball();
+      game.dragonFireTimer = THREE.MathUtils.randFloat(1.35, 1.95);
+    }
+  }
+
+  updateFirebirds(delta);
+}
+
+function updateRedDragon(delta) {
+  const data = redDragon.userData;
+  data.orbitAngle += delta * 0.58;
+
+  const center = tempVec.set(-4, planetHeight(-4, -2) + 9.8, -2);
+  redDragon.position.set(
+    center.x + Math.sin(data.orbitAngle) * 22,
+    center.y + Math.sin(clock.elapsedTime * 2.1) * 1.2,
+    center.z + Math.cos(data.orbitAngle) * 18,
+  );
+
+  const target = getNearestVisibleChicken()?.position || player.position;
+  redDragon.lookAt(target.x, target.y + 0.8, target.z);
+  redDragon.rotation.z = Math.sin(clock.elapsedTime * 2.5) * 0.08;
+  data.leftWing.rotation.z = 0.22 + Math.sin(clock.elapsedTime * 7.5) * 0.34;
+  data.rightWing.rotation.z = -0.22 - Math.sin(clock.elapsedTime * 7.5) * 0.34;
+  data.throatGlow.intensity = 1 + Math.max(0, Math.sin(clock.elapsedTime * 8)) * 1.3;
+}
+
+function spawnDragonFireball() {
+  const targetChicken = getNearestVisibleChicken();
+  if (!targetChicken || dragonFireballs.length > 14) return;
+
+  const origin = redDragon.userData.mouth.getWorldPosition(new THREE.Vector3());
+  const target = targetChicken.position.clone().add(new THREE.Vector3(0, 0.52, 0));
+  const direction = target.sub(origin).normalize();
+
+  const fireball = new THREE.Group();
+  fireball.name = "Dragon Chicken Fireball";
+  fireball.position.copy(origin);
+
+  const outer = new THREE.Mesh(new THREE.SphereGeometry(0.36, 14, 10), materials.fireball);
+  outer.name = "Fireball Flame";
+  fireball.add(outer);
+
+  const core = new THREE.Mesh(new THREE.SphereGeometry(0.18, 10, 8), materials.fireballCore);
+  core.name = "Fireball Core";
+  fireball.add(core);
+
+  const tail = new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.9, 10), materials.firebirdFlame);
+  tail.name = "Fireball Tail";
+  tail.rotation.x = Math.PI / 2;
+  tail.position.z = 0.46;
+  fireball.add(tail);
+
+  const glow = new THREE.PointLight(0xff5b18, 1.3, 11);
+  fireball.add(glow);
+
+  fireball.userData = {
+    velocity: direction.multiplyScalar(19),
+    targetChicken,
+    life: 2.8,
+    maxLife: 2.8,
+  };
+
+  dragonFireballs.push(fireball);
+  scene.add(fireball);
+  setStatus("The red dragon spits fireballs at the chickens.", 1.8);
+}
+
+function updateDragonFireballs(delta) {
+  for (let i = dragonFireballs.length - 1; i >= 0; i -= 1) {
+    const fireball = dragonFireballs[i];
+    fireball.userData.life -= delta;
+    fireball.position.addScaledVector(fireball.userData.velocity, delta);
+    fireball.rotation.x += delta * 8;
+    fireball.rotation.y += delta * 11;
+
+    const pulse = 0.9 + Math.sin(clock.elapsedTime * 18 + i) * 0.18;
+    fireball.scale.setScalar(pulse);
+    fireball.children.forEach((child, childIndex) => {
+      if (child.material?.opacity !== undefined) {
+        child.material.opacity = childIndex === 1 ? 0.82 : 0.76 + pulse * 0.1;
+      }
+    });
+
+    const targetChicken = fireball.userData.targetChicken;
+    if (targetChicken?.visible && !targetChicken.userData.eaten && fireball.position.distanceTo(targetChicken.position) < 1.05) {
+      turnChickenIntoMoltres(targetChicken, fireball.position.clone());
+      removeDragonFireball(i);
+      continue;
+    }
+
+    const ground = planetHeight(fireball.position.x, fireball.position.z) + 0.12;
+    if (fireball.position.y <= ground || fireball.userData.life <= 0) {
+      createHitBurst(fireball.position.clone().setY(Math.max(fireball.position.y, ground)), new THREE.Vector3(0, 1, 0));
+      removeDragonFireball(i);
+    }
+  }
+}
+
+function turnChickenIntoMoltres(chicken, impactPosition) {
+  const transformPosition = chicken.position.clone();
+  chicken.userData.eaten = true;
+  chicken.visible = false;
+  game.chickensScorched += 1;
+  game.cameraShake = Math.max(game.cameraShake, 0.1);
+  createDamageNumber(impactPosition.clone().add(new THREE.Vector3(0, 0.8, 0)), "MOLTRES", "enemy");
+  createHitBurst(impactPosition, new THREE.Vector3(0, 1, 0));
+
+  const bird = createFirebird(game.chickensScorched);
+  bird.name = `Moltres From Chicken ${game.chickensScorched}`;
+  bird.position.set(
+    transformPosition.x,
+    planetHeight(transformPosition.x, transformPosition.z) + 2.9,
+    transformPosition.z,
+  );
+  const awayFromDragon = redDragon
+    ? transformPosition.clone().sub(redDragon.position).setY(0).normalize()
+    : new THREE.Vector3(0, 0, -1);
+  bird.userData.velocity.copy(awayFromDragon.multiplyScalar(5.2));
+  bird.userData.velocity.y = 4.5;
+  firebirds.push(bird);
+  scene.add(bird);
+
+  setStatus("A fireball transformed a chicken into a Moltres-like attacker.", 2.4);
+}
+
+function updateFirebirds(delta) {
+  firebirds.forEach((bird, index) => {
+    const data = bird.userData;
+    data.attackCooldown = Math.max(0, data.attackCooldown - delta);
+
+    const target = player.position.clone().add(new THREE.Vector3(0, 1.45, 0));
+    const toPlayer = target.sub(bird.position);
+    const distance = toPlayer.length();
+    const direction = distance > 0.001 ? toPlayer.normalize() : new THREE.Vector3(0, 0, -1);
+    const side = data.side || (index === 0 ? -1 : 1);
+    const orbit = new THREE.Vector3(-direction.z * side, 0.28, direction.x * side).normalize();
+    const desired = direction.multiplyScalar(distance > 4 ? 13 : 7).addScaledVector(orbit, 3.4);
+
+    data.velocity.lerp(desired, 0.07);
+    bird.position.addScaledVector(data.velocity, delta);
+
+    const ground = planetHeight(bird.position.x, bird.position.z) + 2.5;
+    if (bird.position.y < ground) {
+      bird.position.y = ground;
+      data.velocity.y = Math.max(data.velocity.y, 2.2);
+    }
+
+    bird.lookAt(player.position.x, player.position.y + 1.2, player.position.z);
+    bird.rotation.z += Math.sin(clock.elapsedTime * 5 + index) * 0.015;
+
+    const flap = Math.sin(clock.elapsedTime * 11.5 + data.flapOffset);
+    data.leftWing.rotation.z = 0.2 + flap * 0.42;
+    data.rightWing.rotation.z = -0.2 - flap * 0.42;
+    data.leftWing.rotation.y = -0.12 + flap * 0.14;
+    data.rightWing.rotation.y = 0.12 - flap * 0.14;
+    data.flameParts.forEach((flame, flameIndex) => {
+      const flicker = Math.sin(clock.elapsedTime * 13 + flame.userData.flickerOffset + flameIndex * 0.37);
+      flame.scale.set(0.92 + flicker * 0.08, 1 + Math.max(0, flicker) * 0.18, 0.92 + flicker * 0.08);
+      flame.rotation.y = Math.sin(clock.elapsedTime * 7 + flame.userData.flickerOffset) * 0.05;
+    });
+    bird.scale.setScalar(1.3 + Math.max(0, flap) * 0.06);
+
+    if (distance < 2.25 && data.attackCooldown <= 0) {
+      data.attackCooldown = 1.15;
+      data.velocity.addScaledVector(direction, -8);
+      damagePlayer(7, "A Moltres-like attacker raked Growlithe. Keep moving.");
+    }
+  });
+}
+
+function getNearestVisibleChicken() {
+  return chickens
+    .filter((chicken) => chicken.visible && !chicken.userData.eaten)
+    .sort((a, b) => redDragon.position.distanceTo(a.position) - redDragon.position.distanceTo(b.position))[0];
+}
+
+function removeDragonFireball(index) {
+  const fireball = dragonFireballs[index];
+  scene.remove(fireball);
+  fireball.traverse((child) => {
+    if (child.geometry) child.geometry.dispose();
+  });
+  dragonFireballs.splice(index, 1);
+}
+
+function clearDragonFireballs() {
+  for (let i = dragonFireballs.length - 1; i >= 0; i -= 1) {
+    removeDragonFireball(i);
+  }
+}
+
+function clearFirebirds() {
+  for (let i = firebirds.length - 1; i >= 0; i -= 1) {
+    const bird = firebirds[i];
+    scene.remove(bird);
+    bird.traverse((child) => {
+      if (child.geometry) child.geometry.dispose();
+    });
+    firebirds.splice(i, 1);
+  }
+}
+
+function spawnPokeballs(position, count = 3) {
+  for (let i = 0; i < count; i += 1) {
+    const angle = (i / count) * Math.PI * 2 + THREE.MathUtils.randFloat(-0.28, 0.28);
+    const radius = THREE.MathUtils.randFloat(0.8, 1.45);
+    const x = THREE.MathUtils.clamp(position.x + Math.sin(angle) * radius, -worldSize + 12, worldSize - 12);
+    const z = THREE.MathUtils.clamp(position.z + Math.cos(angle) * radius, -worldSize + 12, worldSize - 12);
+    const y = planetHeight(x, z) + 0.55;
+    const tint = new THREE.Color().setHSL(THREE.MathUtils.randFloat(0, 1), 0.72, 0.64);
+    const material = new THREE.MeshStandardMaterial({
+      map: pokeballTexture,
+      color: tint,
+      roughness: 0.38,
+      metalness: 0.08,
+      emissive: tint.clone().multiplyScalar(0.16),
+      emissiveIntensity: 0.36,
+    });
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(0.46, 32, 18), material);
+    ball.name = "Random Color Pokeball";
+    ball.position.set(x, y, z);
+    ball.rotation.set(
+      THREE.MathUtils.randFloat(0, Math.PI),
+      THREE.MathUtils.randFloat(0, Math.PI * 2),
+      THREE.MathUtils.randFloat(0, Math.PI),
+    );
+    ball.castShadow = true;
+    ball.userData = {
+      baseY: y,
+      bobOffset: THREE.MathUtils.randFloat(0, Math.PI * 2),
+      spinSpeed: THREE.MathUtils.randFloat(1.2, 2.6),
+      tint,
+    };
+    pokeballs.push(ball);
+    scene.add(ball);
+  }
+}
+
+function updatePokeballs(delta) {
+  pokeballs.forEach((ball) => {
+    ball.position.y = ball.userData.baseY + Math.sin(clock.elapsedTime * 3.8 + ball.userData.bobOffset) * 0.16;
+    ball.rotation.y += delta * ball.userData.spinSpeed;
+    ball.rotation.x += delta * ball.userData.spinSpeed * 0.35;
+  });
+}
+
+function getNearestPokeball() {
+  return pokeballs
+    .map((ball, index) => ({
+      ball,
+      index,
+      distance: flatDistance(player.position, ball.position),
+    }))
+    .sort((a, b) => a.distance - b.distance)[0];
+}
+
+function captureNearestPokeball() {
+  if (pokeballs.length === 0 || game.phase !== "planet") return false;
+
+  const nearest = getNearestPokeball();
+
+  if (!nearest || nearest.distance > 2.6) {
+    return false;
+  }
+
+  const { ball, index } = nearest;
+  const position = ball.position.clone();
+  scene.remove(ball);
+  ball.geometry.dispose();
+  ball.material.dispose();
+  pokeballs.splice(index, 1);
+  game.pokeballsCollected += 1;
+  game.cameraShake = Math.max(game.cameraShake, 0.05);
+  createDamageNumber(position.clone().add(new THREE.Vector3(0, 0.8, 0)), "+1 BALL", "block");
+  createHitBurst(position, new THREE.Vector3(0, 1, 0));
+  setStatus("Pokeball captured.", 1.6);
+  return true;
+}
+
+function clearPokeballs() {
+  for (let i = pokeballs.length - 1; i >= 0; i -= 1) {
+    const ball = pokeballs[i];
+    scene.remove(ball);
+    ball.geometry.dispose();
+    ball.material.dispose();
+    pokeballs.splice(i, 1);
+  }
+}
+
+function spawnCapturePokemon(position) {
+  if (!capturePokemon) return;
+
+  const x = THREE.MathUtils.clamp(position.x, -worldSize + 12, worldSize - 12);
+  const z = THREE.MathUtils.clamp(position.z, -worldSize + 12, worldSize - 12);
+  capturePokemon.position.set(x, planetHeight(x, z), z);
+  capturePokemon.rotation.set(0, yawForDirection(player.position.clone().sub(capturePokemon.position)), 0);
+  capturePokemon.visible = true;
+  capturePokemon.userData.captured = false;
+  capturePokemon.userData.captureReady = true;
+  capturePokemon.userData.followVelocity.set(0, 0, 0);
+  game.capturePokemonSpawned = true;
+  createHitBurst(capturePokemon.position.clone().add(new THREE.Vector3(0, 1.05, 0)), new THREE.Vector3(0, 1, 0));
+  setStatus("A helper Pokemon appeared. Get close and press E to capture it.", 4);
+}
+
+function tryCapturePokemon() {
+  if (!capturePokemon?.visible || capturePokemon.userData.captured || !capturePokemon.userData.captureReady) {
+    return false;
+  }
+
+  const distance = flatDistance(player.position, capturePokemon.position);
+  if (distance > 3.1) {
+    if (game.phase === "planet") {
+      setStatus("Get closer to the helper Pokemon, then press E to capture it.", 1.6);
+    }
+    return false;
+  }
+
+  capturePokemon.userData.captured = true;
+  capturePokemon.userData.captureReady = false;
+  game.capturePokemonCaptured = true;
+  game.companionCapturePower = 1;
+  game.cameraShake = Math.max(game.cameraShake, 0.08);
+  createDamageNumber(capturePokemon.position.clone().add(new THREE.Vector3(0, 1.7, 0)), "CAPTURED", "block");
+  setStatus("Helper Pokemon captured. It will help capture more Pokemon in future battles.", 4.5);
+  return true;
+}
+
+function updateCapturePokemon(delta) {
+  if (!capturePokemon?.visible) return;
+
+  const data = capturePokemon.userData;
+  const elapsed = clock.elapsedTime + data.bobOffset;
+  const ground = getCurrentGroundY(capturePokemon.position.x, capturePokemon.position.z);
+
+  if (data.captured) {
+    const followOffset = new THREE.Vector3(2.2, 0, 2.7).applyAxisAngle(yAxis, player.rotation.y);
+    const desired = player.position.clone().add(followOffset);
+    desired.y = getCurrentGroundY(desired.x, desired.z);
+    const toTarget = desired.sub(capturePokemon.position);
+    toTarget.y = 0;
+    if (toTarget.length() > 0.15) {
+      data.followVelocity.lerp(toTarget.normalize().multiplyScalar(6.2), 0.08);
+      capturePokemon.position.addScaledVector(data.followVelocity, delta);
+    } else {
+      data.followVelocity.multiplyScalar(0.88);
+    }
+    capturePokemon.position.y = getCurrentGroundY(capturePokemon.position.x, capturePokemon.position.z) + Math.sin(elapsed * 4.5) * 0.08;
+    capturePokemon.rotation.y = dampAngle(capturePokemon.rotation.y, yawForDirection(player.position.clone().sub(capturePokemon.position)), 7, delta);
+  } else {
+    capturePokemon.position.y = ground + Math.sin(elapsed * 3.8) * 0.12;
+    capturePokemon.rotation.y += delta * 0.8;
+  }
+
+  data.sparkAnchor.rotation.y -= delta * (data.captured ? 2.6 : 1.5);
+  data.sparkAnchor.children.forEach((spark, index) => {
+    const angle = data.sparkAnchor.rotation.y + spark.userData.angle;
+    const radius = data.captured ? 0.86 : 0.7;
+    spark.position.set(Math.sin(angle) * radius, Math.sin(elapsed * 5 + index) * 0.16, Math.cos(angle) * radius);
+    spark.rotation.x += delta * 3.4;
+    spark.rotation.y += delta * 4.2;
+    spark.material.opacity = data.captured ? 0.92 : 0.68 + Math.sin(elapsed * 4 + index) * 0.18;
+  });
+}
+
 function distanceToSegment2D(point, start, end) {
   const px = point.x;
   const pz = point.z;
@@ -2166,13 +3176,7 @@ function updateCapture(delta) {
   }
 
   if (game.capture >= 100 && !game.won) {
-    game.won = true;
-    setStatus("Mount Gosha captured. The Growlithe rider owns the dune route.", 20);
-    mountGosha.children.forEach((child) => {
-      if (child.material?.emissive) {
-        child.material.emissive.setHex(0x14f7ff);
-      }
-    });
+    completeMountGoshaCapture("Mount Gosha captured. Piglins fly away and the world stays open.");
   }
 }
 
@@ -2318,12 +3322,18 @@ function spawnRocketSmoke() {
 }
 
 function beginRocketBoarding(origin = game.phase) {
+  if (origin === "planet") {
+    stopDragonEncounter();
+  }
   game.phase = "launching";
   game.launchOrigin = origin;
   game.flightTarget = origin === "planet" ? "desert" : "planet";
   game.launchTimer = 0;
   game.won = false;
   player.visible = false;
+  if (origin === "planet" && capturePokemon) {
+    capturePokemon.visible = false;
+  }
   game.chickenPassenger = origin === "planet" ? boardChickenPassenger() : false;
   if (rocketChickenPassenger) {
     rocketChickenPassenger.visible = game.chickenPassenger;
@@ -2382,11 +3392,20 @@ function landOnNewPlanet() {
   rocket.position.set(8, planetHeight(8, 20), 20);
   rocket.rotation.set(0, 0.32, 0);
   if (rocketChickenPassenger) rocketChickenPassenger.visible = false;
+  if (capturePokemon?.userData.captured) {
+    capturePokemon.visible = true;
+    capturePokemon.position.set(-2.4, planetHeight(-2.4, 13.8), 13.8);
+  }
   shipVelocity.set(0, 0, 0);
-  setStatus("You landed on a different planet. The piglins are far away.", 8);
+  startDragonEncounter();
+  if (game.lavaSpewCount === 0) {
+    volcanoes.slice(0, 1).forEach((volcano) => spawnVolcanoLava(volcano));
+  }
+  setStatus("You landed on a different planet. A red dragon is hunting the chickens.", 8);
 }
 
 function landBackOnDesert() {
+  stopDragonEncounter();
   game.phase = "desert";
   game.escaped = false;
   game.won = false;
@@ -2402,6 +3421,10 @@ function landBackOnDesert() {
   shipVelocity.set(0, 0, 0);
 
   if (rocketChickenPassenger) rocketChickenPassenger.visible = false;
+  if (capturePokemon?.userData.captured) {
+    capturePokemon.visible = true;
+    capturePokemon.position.set(player.position.x + 2.2, groundY(player.position.x + 2.2, player.position.z + 2.4), player.position.z + 2.4);
+  }
   if (game.chickenPassenger) {
     game.returnedChicken = true;
     desertChicken.visible = true;
@@ -2478,7 +3501,7 @@ function updateCamera(delta, elapsed) {
 
 function updateHud(delta) {
   game.statusTimer = Math.max(0, game.statusTimer - delta);
-  if (game.statusTimer <= 0 && !game.won && !game.lost) {
+  if (game.statusTimer <= 0 && !game.lost) {
     if (game.phase === "space") {
       ui.status.textContent = game.flightTarget === "desert"
         ? "Steer the rocket back to the original planet."
@@ -2486,8 +3509,17 @@ function updateHud(delta) {
     } else if (game.phase === "planet") {
       const nearestChicken = getNearestChicken();
       const rocketDistance = player.position.distanceTo(rocket.position);
+      const nearestPokeball = getNearestPokeball();
       if (rocketDistance < rocket.userData.boardRadius) {
         ui.status.textContent = "Press Space to return in the rocket with a nearby chicken.";
+      } else if (nearestPokeball && nearestPokeball.distance < 3.2) {
+        ui.status.textContent = "Press E to capture the Pokeball.";
+      } else if (capturePokemon?.visible && !capturePokemon.userData.captured && flatDistance(player.position, capturePokemon.position) < 4.2) {
+        ui.status.textContent = "Press E to capture the helper Pokemon.";
+      } else if (firebirds.length > 0) {
+        ui.status.textContent = "Dodge the Moltres-like attackers and hit them with the diamond sword.";
+      } else if (game.dragonActive) {
+        ui.status.textContent = "The red dragon is turning chickens into Moltres-like attackers.";
       } else if (nearestChicken && nearestChicken.distance < 3.2) {
         ui.status.textContent = "Press E to let Growlithe eat the chicken.";
       } else {
@@ -2502,6 +3534,8 @@ function updateHud(delta) {
       const rocketDistance = player.position.distanceTo(rocket.position);
       if (rocketDistance < rocket.userData.boardRadius) {
         ui.status.textContent = "Press Space to jump into the rocket.";
+      } else if (game.won) {
+        ui.status.textContent = "Mount Gosha is captured. Keep exploring or find the rocket.";
       } else if (distance < 9) {
         ui.status.textContent = "Jump onto Mount Gosha or hold E inside the capture circle.";
       } else if (distance < 28) {
@@ -2512,20 +3546,25 @@ function updateHud(delta) {
     }
   }
 
-  ui.missionEyebrow.textContent = game.phase === "planet" ? "Escaped" : "Growlithe Rider";
+  ui.missionEyebrow.textContent = game.phase === "planet" ? "Escaped" : game.won ? "Gosha Captured" : "Growlithe Rider";
   ui.missionTitle.textContent =
     game.phase === "space"
       ? game.flightTarget === "desert"
         ? "Fly Back Home"
         : "Fly To The Planet"
       : game.phase === "planet"
-        ? "Safe On A New Planet"
-        : "Capture Mount Gosha";
+        ? game.capturePokemonCaptured
+          ? "Train The Helper Pokemon"
+          : "Safe On A New Planet"
+        : game.won
+          ? "Explore The Desert"
+          : "Capture Mount Gosha";
   ui.healthFill.style.width = `${game.health}%`;
   ui.healthText.textContent = `${Math.round(game.health)}`;
   ui.captureFill.style.width = `${game.capture}%`;
   ui.captureText.textContent = `${Math.round(game.capture)}%`;
   ui.piglinScore.textContent = `${game.piglinsDefeated}`;
+  ui.pokeballScore.textContent = `${game.pokeballsCollected}`;
   const nearRocket =
     (game.phase === "desert" || game.phase === "planet") &&
     player.position.distanceTo(rocket.position) < rocket.userData.boardRadius;
@@ -2534,19 +3573,21 @@ function updateHud(delta) {
 }
 
 function swingSword() {
-  if (game.lost || game.won || game.attackCooldown > 0) return;
+  if (game.lost || game.attackCooldown > 0) return;
 
   game.attackCooldown = 0.54;
   game.attackTimer = 0.36;
   const { hits, blocks } = resolveSwordTargets();
+  const firebirdHits = resolveFirebirdTargets();
 
   blocks.forEach(({ piglin }) => showBlockEffect(piglin));
   hits.forEach(({ piglin, hitDir }) => takeDownPiglin(piglin, hitDir));
+  firebirdHits.forEach(({ bird, hitDir }) => takeDownFirebird(bird, hitDir));
 
-  if (hits.length > 0 || blocks.length > 0) {
+  if (hits.length > 0 || blocks.length > 0 || firebirdHits.length > 0) {
     game.cameraShake = Math.max(game.cameraShake, blocks.length > 0 ? 0.16 : 0.08);
   } else {
-    setStatus("Face a piglin and swing close to land the diamond sword.", 1.2);
+    setStatus(game.phase === "planet" ? "Face a Moltres-like attacker and swing close to hit it." : "Face a piglin and swing close to land the diamond sword.", 1.2);
   }
 }
 
@@ -2584,6 +3625,28 @@ function resolveSwordTargets() {
   };
 }
 
+function resolveFirebirdTargets() {
+  if (game.phase !== "planet" || firebirds.length === 0) return [];
+
+  const forward = getPlayerForward(new THREE.Vector3());
+  const right = getPlayerRight(new THREE.Vector3());
+  return firebirds
+    .map((bird) => {
+      const offset = bird.position.clone().sub(player.position);
+      offset.y *= 0.35;
+      const distance = offset.length();
+      const flatOffset = bird.position.clone().sub(player.position);
+      flatOffset.y = 0;
+      const direction = flatOffset.lengthSq() > 0.001 ? flatOffset.normalize() : getPlayerForward(new THREE.Vector3());
+      const lateral = Math.abs(direction.clone().multiplyScalar(distance).dot(right));
+      const inFrontArc = direction.dot(forward) > 0.18 && lateral < 4.6;
+      return { bird, distance, hitDir: direction, inFrontArc };
+    })
+    .filter((target) => target.distance < 6.2 && target.inFrontArc)
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, 1);
+}
+
 function takeDownPiglin(piglin, hitDir) {
   const data = piglin.userData;
   data.health = 0;
@@ -2598,6 +3661,29 @@ function takeDownPiglin(piglin, hitDir) {
   createDamageNumber(piglin.position.clone().add(new THREE.Vector3(0, 2.25, 0)), "-25", "enemy");
   createHitBurst(piglin.position.clone().add(new THREE.Vector3(0, 1.35, 0)), hitDir);
   setStatus("Diamond sword hit. Piglin down.");
+}
+
+function takeDownFirebird(bird, hitDir) {
+  const position = bird.position.clone();
+  const index = firebirds.indexOf(bird);
+  if (index >= 0) {
+    firebirds.splice(index, 1);
+  }
+
+  scene.remove(bird);
+  bird.traverse((child) => {
+    if (child.geometry) child.geometry.dispose();
+  });
+
+  createDamageNumber(position.clone().add(new THREE.Vector3(0, 1.25, 0)), "-50", "enemy");
+  createHitBurst(position, hitDir);
+  spawnPokeballs(position, 3);
+  game.cameraShake = Math.max(game.cameraShake, 0.16);
+  setStatus("Diamond sword destroyed a Moltres-like attacker. Random-color Pokeballs appeared.", 2.4);
+
+  if (!game.capturePokemonSpawned && !game.capturePokemonCaptured) {
+    spawnCapturePokemon(position);
+  }
 }
 
 function showBlockEffect(piglin) {
@@ -2760,6 +3846,7 @@ function resetGame() {
   game.health = 100;
   game.capture = 0;
   game.piglinsDefeated = 0;
+  game.pokeballsCollected = 0;
   game.chickensEaten = 0;
   game.won = false;
   game.lost = false;
@@ -2779,6 +3866,12 @@ function resetGame() {
   game.chickenPassenger = false;
   game.returnedChicken = false;
   game.lavaSpewCount = 0;
+  game.dragonActive = false;
+  game.dragonFireTimer = 0;
+  game.chickensScorched = 0;
+  game.capturePokemonSpawned = false;
+  game.capturePokemonCaptured = false;
+  game.companionCapturePower = 0;
   player.position.set(0, groundY(0, 8), 8);
   player.rotation.y = 0;
   game.targetYaw = 0;
@@ -2796,6 +3889,9 @@ function resetGame() {
   if (desertChicken) desertChicken.visible = false;
   clearSmokePuffs();
   clearLavaBombs();
+  stopDragonEncounter();
+  clearPokeballs();
+  resetCapturePokemon();
   clearDamageNumbers();
   mountGosha.userData.base.set(8, 0, -74);
   materials.gosha.emissive.setHex(0x000000);
@@ -2823,6 +3919,8 @@ function resetPiglin(piglin) {
   piglin.userData.isDown = false;
   piglin.userData.isBlocking = false;
   piglin.userData.forceBlocking = false;
+  piglin.userData.fleeing = false;
+  piglin.userData.fleeTimer = 0;
   piglin.userData.blockCooldown = THREE.MathUtils.randFloat(0.6, 1.8);
   piglin.userData.velocity.set(0, 0, 0);
 }
@@ -2835,6 +3933,17 @@ function resetChickens() {
     chicken.userData.eaten = false;
     chicken.userData.peckTimer = THREE.MathUtils.randFloat(0.2, 1.4);
   });
+}
+
+function resetCapturePokemon() {
+  if (!capturePokemon) return;
+
+  capturePokemon.visible = false;
+  capturePokemon.position.set(0, 0, 0);
+  capturePokemon.rotation.set(0, 0, 0);
+  capturePokemon.userData.captured = false;
+  capturePokemon.userData.captureReady = false;
+  capturePokemon.userData.followVelocity.set(0, 0, 0);
 }
 
 function clearSmokePuffs() {

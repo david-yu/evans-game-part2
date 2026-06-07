@@ -128,6 +128,69 @@ h1 {
   line-height: 1;
 }
 
+.controls-legend {
+  position: absolute;
+  top: max(108px, calc(env(safe-area-inset-top) + 96px));
+  right: max(18px, env(safe-area-inset-right));
+  width: min(238px, calc(100vw - 36px));
+  padding: 10px 11px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(6, 12, 20, 0.68);
+  backdrop-filter: blur(14px);
+}
+
+.controls-legend h2 {
+  margin: 0 0 8px;
+  color: #fff8e7;
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.controls-legend dl {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 5px;
+  margin: 0;
+}
+
+.controls-legend div {
+  display: grid;
+  grid-template-columns: minmax(58px, auto) 1fr;
+  align-items: center;
+  gap: 8px;
+  min-height: 22px;
+}
+
+.controls-legend dt {
+  display: inline-flex;
+  min-height: 22px;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--cyan);
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.controls-legend dd {
+  margin: 0;
+  color: #dbe6ff;
+  font-size: 0.72rem;
+  font-weight: 750;
+  letter-spacing: 0;
+  line-height: 1.1;
+}
+
 .hud-bottom {
   position: absolute;
   left: max(18px, env(safe-area-inset-left));
@@ -372,6 +435,39 @@ h1 {
   .hud-actions {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .controls-legend {
+    top: max(106px, calc(env(safe-area-inset-top) + 100px));
+    right: max(12px, env(safe-area-inset-right));
+    width: min(210px, calc(100vw - 24px));
+    padding: 8px;
+  }
+
+  .controls-legend h2 {
+    margin-bottom: 6px;
+    font-size: 0.68rem;
+  }
+
+  .controls-legend dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px 7px;
+  }
+
+  .controls-legend div {
+    grid-template-columns: 42px 1fr;
+    gap: 5px;
+    min-height: 20px;
+  }
+
+  .controls-legend dt {
+    min-height: 20px;
+    padding: 2px 4px;
+    font-size: 0.58rem;
+  }
+
+  .controls-legend dd {
+    font-size: 0.62rem;
   }
 
   #restartButton {
