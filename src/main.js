@@ -48,6 +48,17 @@ const CHICKEN_THROW_LIFE = 3.8;
 const CHICKEN_PICKUP_DISTANCE = 2.4;
 const CHICKEN_HIT_DRAGON_DISTANCE = 1.72;
 const CHICKEN_THROW_GRAVITY = 17;
+const APPLE_PICKUP_DISTANCE = 2.2;
+const APPLE_HEAL_AMOUNT = 16;
+const APPLE_LIFETIME = 20;
+const GROWLITHE_QUICKSAND_RAINBOW_DURATION = 2.5;
+const QUICKSAND_MAX_DEPTH = 0.92;
+const QUICKSAND_SPEED_MULTIPLIER_MIN = 0.35;
+const QUICK_SAND_ZONES = [
+  { x: -21, z: -58, radiusX: 12, radiusZ: 18, strength: 0.88 },
+  { x: 34, z: -12, radiusX: 14, radiusZ: 11, strength: 0.68 },
+  { x: 6, z: 44, radiusX: 16, radiusZ: 9, strength: 0.76 },
+];
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x050813);
@@ -140,6 +151,8 @@ const game = {
   dragonRespawnTimer: 0,
   dragonDefeatTimer: 0,
   dragonRainbowTimer: 0,
+  growlitheRainbowTimer: 0,
+  growlitheRainbowPersistent: false,
 };
 
 const materials = {
@@ -263,6 +276,35 @@ const materials = {
     emissiveIntensity: 0.45,
     roughness: 0.24,
     metalness: 0.62,
+  }),
+  shoulderArmor: new THREE.MeshStandardMaterial({
+    color: 0x5f6d84,
+    roughness: 0.35,
+    metalness: 0.58,
+  }),
+  shoulderSpikeSilver: new THREE.MeshStandardMaterial({
+    color: 0xd8ddea,
+    emissive: 0x4a5a72,
+    emissiveIntensity: 0.1,
+    roughness: 0.16,
+    metalness: 0.95,
+  }),
+  shoulderSpikeBase: new THREE.MeshStandardMaterial({
+    color: 0x8d97a7,
+    roughness: 0.28,
+    metalness: 0.72,
+  }),
+  appleBody: new THREE.MeshStandardMaterial({
+    color: 0xd61f2c,
+    roughness: 0.45,
+    metalness: 0.05,
+    emissive: 0x2b070b,
+    emissiveIntensity: 0.1,
+  }),
+  appleLeaf: new THREE.MeshStandardMaterial({
+    color: 0x2fae4a,
+    roughness: 0.58,
+    metalness: 0.08,
   }),
   planetGround: new THREE.MeshStandardMaterial({
     color: 0x3aa879,
@@ -495,6 +537,7 @@ const firebirds = [];
 const pokeballs = [];
 const asteroids = [];
 const spaceShots = [];
+const apples = [];
 let playerHeldChicken = null;
 let thrownChicken = null;
 let pendingDragonChicken = null;
@@ -594,6 +637,7 @@ window.__GOSHA_GAME_DEBUG__ = {
     dragonColorIndex: game.dragonColorIndex,
     firebirdsVisible: firebirds.length,
     pokeballsVisible: pokeballs.length,
+    applesVisible: apples.length,
     asteroidsVisible: asteroids.length,
     spaceShotsVisible: spaceShots.length,
     asteroidsDestroyed: game.asteroidsDestroyed,
@@ -1997,6 +2041,11 @@ function createGrowlitheJockey() {
 
   group.userData.walkCycle = 0;
   group.userData.grounded = true;
+  group.userData.inQuicksand = false;
+  group.userData.wasInQuicksand = false;
+  group.userData.quicksandMultiplier = 1;
+  group.userData.quicksandDepth = 0;
+  group.userData.rainbowParts = collectGrowlitheColorParts(group);
   group.userData.legs = group.children.filter((child) => child.userData.isLeg);
   group.userData.danceParts = {
     body,
@@ -2008,6 +2057,32 @@ function createGrowlitheJockey() {
     saddle,
   };
   return group;
+}
+
+function collectGrowlitheColorParts(root) {
+  const trackedMaterials = new Set();
+  const parts = [];
+  const growlitheMaterials = new Set([
+    materials.growlitheFur,
+    materials.growlitheFurDark,
+    materials.growlitheCream,
+    materials.growlitheCreamShade,
+    materials.growlitheStripe,
+    materials.growlitheNose,
+  ]);
+
+  root.traverse((node) => {
+    if (!node.isMesh || !node.material?.color) return;
+    if (!growlitheMaterials.has(node.material) || trackedMaterials.has(node.material)) return;
+    trackedMaterials.add(node.material);
+    parts.push({
+      material: node.material,
+      baseColor: node.material.color.clone(),
+      baseEmissive: node.material.emissive ? node.material.emissive.clone() : null,
+    });
+  });
+
+  return parts;
 }
 
 function createFurSpike(x, y, z, radius, length, pitch, yaw = 0, material = materials.growlitheCream) {
@@ -2082,39 +2157,67 @@ function createShoulderShield() {
   shield.rotation.set(0.12, -0.2, 0.86);
   shield.userData.isSpikedShoulderShield = true;
 
-  const plate = new THREE.Mesh(new THREE.CylinderGeometry(0.52, 0.62, 0.2, 10), materials.shield);
-  plate.scale.set(1, 0.5, 1.28);
+  const plate = new THREE.Mesh(new THREE.CylinderGeometry(0.58, 0.68, 0.2, 18, 1), materials.shoulderArmor);
+  plate.scale.set(1.02, 0.52, 1.32);
   plate.rotation.x = Math.PI / 2;
   plate.castShadow = true;
   shield.add(plate);
 
-  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.58, 0.055, 10, 32), materials.gold);
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.58, 0.055, 10, 36), materials.shoulderArmor);
   rim.rotation.x = Math.PI / 2;
   rim.scale.z = 1.28;
   rim.castShadow = true;
   shield.add(rim);
 
-  const boss = new THREE.Mesh(new THREE.SphereGeometry(0.16, 14, 10), materials.shieldSpike);
+  const boss = new THREE.Mesh(new THREE.SphereGeometry(0.16, 16, 12), materials.shoulderSpikeBase);
   boss.scale.set(1, 0.6, 1);
   boss.position.y = 0.13;
   boss.castShadow = true;
   shield.add(boss);
 
+  const shellRidge = new THREE.Mesh(new THREE.CylinderGeometry(0.53, 0.59, 0.08, 24, 1), materials.shoulderArmor);
+  shellRidge.rotation.x = Math.PI / 2;
+  shellRidge.position.y = -0.05;
+  shellRidge.castShadow = true;
+  shield.add(shellRidge);
+
   const spikePositions = [
     [0, 0.22, -0.64, 0.44],
-    [-0.43, 0.2, -0.28, 0.36],
-    [0.43, 0.2, -0.28, 0.36],
-    [-0.36, 0.19, 0.3, 0.32],
-    [0.36, 0.19, 0.3, 0.32],
-    [0, 0.18, 0.58, 0.36],
+    [-0.43, 0.2, -0.28, 0.4],
+    [0.43, 0.2, -0.28, 0.4],
+    [-0.36, 0.19, 0.3, 0.36],
+    [0.36, 0.19, 0.3, 0.36],
+    [0, 0.18, 0.6, 0.38],
   ];
 
   spikePositions.forEach(([x, y, z, length]) => {
-    const spike = new THREE.Mesh(new THREE.ConeGeometry(0.085, length, 12), materials.shieldSpike);
+    const spikeBase = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.045, 0.08, 10), materials.shoulderSpikeBase);
+    spikeBase.position.set(x, y - 0.018, z);
+    spikeBase.rotation.x = Math.PI / 2;
+    spikeBase.castShadow = true;
+    shield.add(spikeBase);
+
+    const spike = new THREE.Group();
     spike.position.set(x, y, z);
     spike.rotation.x = Math.PI / 2;
     spike.castShadow = true;
+    const spikeBody = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.028, length * 0.78, 10), materials.shoulderSpikeSilver);
+    spikeBody.castShadow = true;
+    spikeBody.rotation.set(0, 0, 0);
+    spike.add(spikeBody);
+    const spikeTip = new THREE.Mesh(new THREE.ConeGeometry(0.014, length * 0.3, 8), materials.shoulderSpikeSilver);
+    spikeTip.position.z = length * 0.5;
+    spikeTip.castShadow = true;
+    spike.add(spikeTip);
     shield.add(spike);
+  });
+
+  [-0.27, 0.27].forEach((x) => {
+    const clamp = new THREE.Mesh(new THREE.TorusGeometry(0.11, 0.03, 8, 16), materials.shoulderSpikeSilver);
+    clamp.rotation.x = Math.PI / 2;
+    clamp.rotation.z = x > 0 ? 0.18 : -0.18;
+    clamp.position.set(x, 0.06, -0.49);
+    shield.add(clamp);
   });
 
   return shield;
@@ -2356,13 +2459,16 @@ function animate() {
     if (game.phase === "desert" && !game.won) {
       updatePiglins(delta);
       updateCapture(delta);
+      updateApples(delta);
     } else if (game.phase === "desert") {
       updateFleeingPiglins(delta);
+      updateApples(delta);
     } else if (game.phase === "planet") {
       updateChickens(delta);
       updatePlayerChickenActions(delta);
       updatePlanetHazards(delta);
       updateDragonEncounter(delta);
+      updateApples(delta);
     }
   } else {
     updateIdlePlayer(delta);
@@ -2388,6 +2494,11 @@ function updatePlayer(delta) {
   const turnInput =
     (keys.get("KeyA") || keys.get("ArrowLeft") ? 1 : 0) -
     (keys.get("KeyD") || keys.get("ArrowRight") ? 1 : 0);
+  const surface = getLandingSurface(player.position.x, player.position.z);
+  const movementMultiplier = surface.type === "quicksand" ? surface.quicksandMultiplier : 1;
+  player.userData.inQuicksand = surface.type === "quicksand";
+  player.userData.quicksandMultiplier = movementMultiplier;
+  player.userData.quicksandDepth = surface.quicksandDepth || 0;
 
   if (turnInput !== 0 && game.danceTimer <= 0) {
     game.targetYaw = normalizeAngle(game.targetYaw + turnInput * (Math.PI / 12) * 4 * delta);
@@ -2398,7 +2509,7 @@ function updatePlayer(delta) {
 
   const hasMovement = forwardInput !== 0;
   if (hasMovement && game.danceTimer <= 0) {
-    const speed = (keys.get("ShiftLeft") || keys.get("ShiftRight") ? 14 : 9.2) * forwardInput;
+    const speed = (keys.get("ShiftLeft") || keys.get("ShiftRight") ? 14 : 9.2) * movementMultiplier * forwardInput;
     const forward = getPlayerForward(tempVec);
     playerVelocity.lerp(forward.multiplyScalar(speed), 0.16);
     player.userData.walkCycle += delta * playerVelocity.length() * 1.4;
@@ -2442,6 +2553,8 @@ function updatePlayer(delta) {
     updateDanceLegs();
   }
 
+  updateGrowlitheRainbow(delta);
+
   game.attackCooldown = Math.max(0, game.attackCooldown - delta);
   if (game.attackTimer > 0) {
     game.attackTimer = Math.max(0, game.attackTimer - delta);
@@ -2459,6 +2572,47 @@ function updatePlayer(delta) {
     swordTrail.material.opacity = THREE.MathUtils.lerp(swordTrail.material.opacity, 0, 0.22);
     swordTrail.visible = swordTrail.material.opacity > 0.02;
   }
+}
+
+function updateGrowlitheRainbow(delta) {
+  const colorParts = player.userData.rainbowParts;
+  if (!colorParts?.length) return;
+  const isRainbow = game.growlitheRainbowPersistent || game.growlitheRainbowTimer > 0;
+
+  if (!isRainbow) {
+    colorParts.forEach(({ material, baseColor, baseEmissive }) => {
+      material.color.copy(baseColor);
+      if (baseEmissive && material.emissive) {
+        material.emissive.copy(baseEmissive);
+      }
+    });
+    return;
+  }
+
+  const hue = (clock.elapsedTime * 0.4) % 1;
+  colorParts.forEach((entry, index) => {
+    const phase = (hue + index * 0.09) % 1;
+    entry.material.color.setHSL(phase, 0.93, 0.58);
+    if (entry.material.emissive && entry.baseEmissive) {
+      entry.material.emissive.setHSL(phase, 0.72, 0.34);
+    }
+  });
+
+  if (!game.growlitheRainbowPersistent) {
+    game.growlitheRainbowTimer = Math.max(0, game.growlitheRainbowTimer - delta);
+  }
+}
+
+function restoreGrowlitheColors() {
+  const colorParts = player.userData.rainbowParts;
+  if (!colorParts?.length) return;
+
+  colorParts.forEach(({ material, baseColor, baseEmissive }) => {
+    material.color.copy(baseColor);
+    if (baseEmissive && material.emissive) {
+      material.emissive.copy(baseEmissive);
+    }
+  });
 }
 
 function queuePlayerTurn(direction) {
@@ -2555,6 +2709,7 @@ function updateIdlePlayer(delta) {
 
 function updatePlayerVertical(delta) {
   const surface = getLandingSurface(player.position.x, player.position.z);
+  const wasInQuicksand = player.userData.inQuicksand;
 
   if (!player.userData.grounded || playerVerticalVelocity !== 0) {
     playerVerticalVelocity -= 24 * delta;
@@ -2564,14 +2719,20 @@ function updatePlayerVertical(delta) {
       player.position.y = surface.y;
       playerVerticalVelocity = 0;
       player.userData.grounded = true;
-      onPlayerLanded(surface);
+      onPlayerLanded(surface, wasInQuicksand);
     } else {
       player.userData.grounded = false;
     }
   } else {
     player.position.y = surface.y;
     player.userData.grounded = true;
+    onPlayerLanded(surface, wasInQuicksand);
   }
+
+  player.userData.inQuicksand = surface.type === "quicksand";
+  player.userData.wasInQuicksand = player.userData.inQuicksand;
+  player.userData.quicksandDepth = surface.quicksandDepth || 0;
+  player.userData.quicksandMultiplier = surface.quicksandMultiplier || 1;
 }
 
 function updateJumpInteractions() {
@@ -2583,9 +2744,14 @@ function updateJumpInteractions() {
   }
 }
 
-function onPlayerLanded(surface) {
+function onPlayerLanded(surface, wasInQuicksand = false) {
   if (surface.type === "rock" && game.phase === "desert") {
     startRockDance();
+    return;
+  }
+
+  if (surface.type === "quicksand" && !wasInQuicksand && game.phase === "desert") {
+    setStatus("Growlithe is sinking in quicksand. Jump to jump out with a burst of color.", 1.6);
   }
 }
 
@@ -2603,6 +2769,11 @@ function requestJumpOrBoard() {
   }
 
   if (player.userData.grounded) {
+    if (game.phase === "desert" && player.userData.inQuicksand) {
+      game.growlitheRainbowPersistent = true;
+      game.growlitheRainbowTimer = GROWLITHE_QUICKSAND_RAINBOW_DURATION;
+      setStatus("Growlithe bursts from quicksand with a burst of color.", 1.1);
+    }
     playerVerticalVelocity = 10.8;
     player.userData.grounded = false;
     if (game.phase === "desert") {
@@ -4174,6 +4345,10 @@ function beginRocketBoarding(origin = game.phase) {
   }
   playerVelocity.set(0, 0, 0);
   playerVerticalVelocity = 0;
+  player.userData.inQuicksand = false;
+  player.userData.wasInQuicksand = false;
+  player.userData.quicksandMultiplier = 1;
+  player.userData.quicksandDepth = 0;
   setWorldMode("launching");
   setStatus(
     game.chickenPassenger
@@ -4225,7 +4400,14 @@ function landOnNewPlanet() {
   game.targetYaw = 0;
   syncGameplayCameraToPlayer();
   player.userData.grounded = true;
+  player.userData.inQuicksand = false;
+  player.userData.wasInQuicksand = false;
+  player.userData.quicksandDepth = 0;
+  player.userData.quicksandMultiplier = 1;
   playerVerticalVelocity = 0;
+  game.growlitheRainbowPersistent = false;
+  game.growlitheRainbowTimer = 0;
+  restoreGrowlitheColors();
   rocket.position.set(8, planetHeight(8, 20), 20);
   rocket.rotation.set(0, 0.32, 0);
   if (rocketChickenPassenger) rocketChickenPassenger.visible = false;
@@ -4254,7 +4436,14 @@ function landBackOnDesert() {
   game.targetYaw = player.rotation.y;
   syncGameplayCameraToPlayer();
   player.userData.grounded = true;
+  player.userData.inQuicksand = false;
+  player.userData.wasInQuicksand = false;
+  player.userData.quicksandDepth = 0;
+  player.userData.quicksandMultiplier = 1;
   playerVerticalVelocity = 0;
+  game.growlitheRainbowPersistent = false;
+  game.growlitheRainbowTimer = 0;
+  restoreGrowlitheColors();
   rocket.position.copy(rocketHome);
   rocket.rotation.set(0, 0, 0);
   shipVelocity.set(0, 0, 0);
@@ -4408,6 +4597,8 @@ function updateHud(delta) {
       ui.status.textContent = game.launchOrigin === "planet"
         ? "Rocket climbing off the green planet."
         : "Rocket climbing out of the desert.";
+    } else if (player.userData.inQuicksand) {
+      ui.status.textContent = "You're in quicksand. Jump to break free.";
     } else {
       const distance = player.position.distanceTo(mountGosha.position);
       const rocketDistance = player.position.distanceTo(rocket.position);
@@ -4539,6 +4730,7 @@ function takeDownPiglin(piglin, hitDir) {
 
   createDamageNumber(piglin.position.clone().add(new THREE.Vector3(0, 2.25, 0)), "-25", "enemy");
   createHitBurst(piglin.position.clone().add(new THREE.Vector3(0, 1.35, 0)), hitDir);
+  spawnApple(piglin.position);
   setStatus("Diamond sword hit. Piglin down.");
 }
 
@@ -4557,6 +4749,7 @@ function takeDownFirebird(bird, hitDir) {
   createDamageNumber(position.clone().add(new THREE.Vector3(0, 1.25, 0)), "-50", "enemy");
   createHitBurst(position, hitDir);
   spawnPokeballs(position, 3);
+  spawnApple(position);
   game.cameraShake = Math.max(game.cameraShake, 0.16);
   setStatus("Diamond sword destroyed a Moltres-like attacker. Random-color Pokeballs appeared.", 2.4);
 
@@ -4755,15 +4948,22 @@ function resetGame() {
   game.asteroidSpawnTimer = 0;
   game.asteroidsDestroyed = 0;
   game.lastAsteroidHitTime = 0;
+  game.growlitheRainbowPersistent = false;
+  game.growlitheRainbowTimer = 0;
   player.position.set(0, groundY(0, 8), 8);
   player.rotation.y = 0;
   game.targetYaw = 0;
   syncGameplayCameraToPlayer();
   player.visible = true;
   player.userData.grounded = true;
+  player.userData.inQuicksand = false;
+  player.userData.wasInQuicksand = false;
+  player.userData.quicksandDepth = 0;
+  player.userData.quicksandMultiplier = 1;
   playerVelocity.set(0, 0, 0);
   playerVerticalVelocity = 0;
   shipVelocity.set(0, 0, 0);
+  restoreGrowlitheColors();
   rocketHome.y = groundY(rocketHome.x, rocketHome.z);
   rocket.position.copy(rocketHome);
   rocket.rotation.set(0, 0, 0);
@@ -4956,6 +5156,24 @@ function cylinderBetween(start, end, radius, material) {
   return mesh;
 }
 
+function getQuicksandAtPosition(x, z) {
+  let level = 0;
+  QUICK_SAND_ZONES.forEach((zone) => {
+    const dx = (x - zone.x) / zone.radiusX;
+    const dz = (z - zone.z) / zone.radiusZ;
+    const distance = dx * dx + dz * dz;
+    if (distance < 1) {
+      level = Math.max(level, (1 - distance) * zone.strength);
+    }
+  });
+  const clampedLevel = Math.min(level, 1);
+  return {
+    level: clampedLevel,
+    sink: clampedLevel * QUICKSAND_MAX_DEPTH,
+    speed: 1 - clampedLevel * (1 - QUICKSAND_SPEED_MULTIPLIER_MIN),
+  };
+}
+
 function duneHeight(x, z) {
   const longWave = Math.sin(x * 0.035 + z * 0.018) * 1.4;
   const crossWave = Math.cos(z * 0.044 - x * 0.02) * 0.9;
@@ -4982,10 +5200,24 @@ function getLandingSurface(x, z) {
   let surface = {
     type: game.phase === "planet" ? "planet" : "ground",
     y: getCurrentGroundY(x, z),
+    quicksandLevel: 0,
+    quicksandDepth: 0,
+    quicksandMultiplier: 1,
   };
 
   if (game.phase !== "desert") {
     return surface;
+  }
+
+  const quicksand = getQuicksandAtPosition(x, z);
+  if (quicksand.level > 0.003) {
+    surface = {
+      type: "quicksand",
+      y: surface.y - quicksand.sink,
+      quicksandLevel: quicksand.level,
+      quicksandDepth: quicksand.sink,
+      quicksandMultiplier: Math.max(quicksand.speed, QUICKSAND_SPEED_MULTIPLIER_MIN),
+    };
   }
 
   rocks.forEach((rock) => {
