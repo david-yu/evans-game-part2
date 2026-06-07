@@ -142,6 +142,19 @@ try {
     await page.keyboard.press("Space");
     await page.waitForTimeout(3100);
     const afterLaunchState = await page.evaluate(() => window.__GOSHA_GAME_DEBUG__.state());
+    const beforeAsteroidShotState = await page.evaluate(() => {
+      window.__GOSHA_GAME_DEBUG__.spawnAsteroidInBlasterPath();
+      return window.__GOSHA_GAME_DEBUG__.state();
+    });
+    await page.keyboard.press("Space");
+    await page.waitForTimeout(520);
+    const afterAsteroidShotState = await page.evaluate(() => window.__GOSHA_GAME_DEBUG__.state());
+    const beforeAsteroidCrashState = await page.evaluate(() => {
+      window.__GOSHA_GAME_DEBUG__.spawnAsteroidOnCollisionPath();
+      return window.__GOSHA_GAME_DEBUG__.state();
+    });
+    await page.waitForTimeout(1200);
+    const afterAsteroidCrashState = await page.evaluate(() => window.__GOSHA_GAME_DEBUG__.state());
 
     await page.evaluate(() => {
       window.__GOSHA_GAME_DEBUG__.placeRocketNearPlanet();
@@ -278,6 +291,25 @@ try {
       throw new Error(`${viewport.name}: rocket blastoff did not produce visible flames and smoke`);
     }
 
+    if (beforeAsteroidShotState.asteroidsVisible <= 0) {
+      throw new Error(`${viewport.name}: debug asteroid did not spawn in the rocket blaster path`);
+    }
+
+    if (
+      afterAsteroidShotState.asteroidsDestroyed <= beforeAsteroidShotState.asteroidsDestroyed ||
+      afterAsteroidShotState.asteroidsVisible >= beforeAsteroidShotState.asteroidsVisible ||
+      afterAsteroidShotState.lastAsteroidHitTime <= beforeAsteroidShotState.lastAsteroidHitTime
+    ) {
+      throw new Error(`${viewport.name}: Spacebar blaster did not destroy the incoming asteroid`);
+    }
+
+    if (
+      afterAsteroidCrashState.health >= beforeAsteroidCrashState.health ||
+      afterAsteroidCrashState.asteroidsVisible >= beforeAsteroidCrashState.asteroidsVisible
+    ) {
+      throw new Error(`${viewport.name}: asteroid collision did not damage the rocket`);
+    }
+
     if (afterLandingState.phase !== "planet" || !afterLandingState.escaped || afterLandingState.piglinsVisible > 0) {
       throw new Error(`${viewport.name}: rocket did not land on the different planet away from piglins`);
     }
@@ -331,7 +363,7 @@ try {
         3,
       )}, colored=${result.coloredRatio.toFixed(3)}, playerDelta=${playerDelta.toFixed(
         2,
-      )}, turnYaw=${turnYaw.toFixed(2)}, swordHit=yes, blockEffect=yes, rockDance=yes, goshaJump=yes, rocketEscape=yes, rocketReturn=yes, rocketSmoke=yes, lavaHazards=yes, lavaFlow=yes, chickens=yes, mountDelta=${mountDelta.toFixed(
+      )}, turnYaw=${turnYaw.toFixed(2)}, swordHit=yes, blockEffect=yes, rockDance=yes, goshaJump=yes, rocketEscape=yes, rocketReturn=yes, rocketSmoke=yes, asteroidCombat=yes, lavaHazards=yes, lavaFlow=yes, chickens=yes, mountDelta=${mountDelta.toFixed(
         2,
       )}, shoulderShield=yes, screenshot=${screenshotPath}`,
     );

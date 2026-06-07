@@ -93,6 +93,10 @@ const game = {
   capturePokemonSpawned: false,
   capturePokemonCaptured: false,
   companionCapturePower: 0,
+  spaceShotCooldown: 0,
+  asteroidSpawnTimer: 0,
+  asteroidsDestroyed: 0,
+  lastAsteroidHitTime: 0,
 };
 
 const materials = {
@@ -378,6 +382,43 @@ const materials = {
     opacity: 0.88,
     depthWrite: false,
   }),
+  asteroidSurface: new THREE.MeshStandardMaterial({
+    color: 0xaaa196,
+    roughness: 1,
+    metalness: 0.02,
+    flatShading: true,
+    vertexColors: true,
+  }),
+  asteroidCrater: new THREE.MeshStandardMaterial({
+    color: 0x343a43,
+    roughness: 1,
+    metalness: 0.01,
+    side: THREE.DoubleSide,
+  }),
+  asteroidRim: new THREE.MeshStandardMaterial({
+    color: 0xb1a18d,
+    roughness: 0.96,
+    metalness: 0.02,
+    flatShading: true,
+  }),
+  asteroidShadow: new THREE.MeshStandardMaterial({
+    color: 0x566170,
+    roughness: 1,
+    metalness: 0.02,
+    flatShading: true,
+  }),
+  spaceShot: new THREE.MeshBasicMaterial({
+    color: 0x49d7ff,
+    transparent: true,
+    opacity: 0.86,
+    depthWrite: false,
+  }),
+  spaceShotCore: new THREE.MeshBasicMaterial({
+    color: 0xf2ffff,
+    transparent: true,
+    opacity: 0.95,
+    depthWrite: false,
+  }),
 };
 
 let player;
@@ -409,6 +450,8 @@ const lavaBombs = [];
 const dragonFireballs = [];
 const firebirds = [];
 const pokeballs = [];
+const asteroids = [];
+const spaceShots = [];
 let playerVerticalVelocity = 0;
 
 setupLighting();
@@ -494,6 +537,12 @@ window.__GOSHA_GAME_DEBUG__ = {
     dragonFireballs: dragonFireballs.length,
     firebirdsVisible: firebirds.length,
     pokeballsVisible: pokeballs.length,
+    asteroidsVisible: asteroids.length,
+    spaceShotsVisible: spaceShots.length,
+    asteroidsDestroyed: game.asteroidsDestroyed,
+    spaceShotCooldown: game.spaceShotCooldown,
+    asteroidSpawnTimer: game.asteroidSpawnTimer,
+    lastAsteroidHitTime: game.lastAsteroidHitTime,
     chickensScorched: game.chickensScorched,
     chickensTransformed: game.chickensScorched,
     capturePokemonSpawned: game.capturePokemonSpawned,
@@ -587,6 +636,32 @@ window.__GOSHA_GAME_DEBUG__ = {
     shipVelocity.set(0, 0, 18);
     return window.__GOSHA_GAME_DEBUG__.state();
   },
+  spawnAsteroidInBlasterPath: () => {
+    prepareDebugSpaceFlight();
+    clearSpaceCombat();
+    game.asteroidSpawnTimer = 99;
+    spawnAsteroid({
+      radius: 1.45,
+      distance: 17,
+      lateral: 0,
+      vertical: 0,
+      speed: 5.5,
+    });
+    return window.__GOSHA_GAME_DEBUG__.state();
+  },
+  spawnAsteroidOnCollisionPath: () => {
+    prepareDebugSpaceFlight();
+    clearSpaceCombat();
+    game.asteroidSpawnTimer = 99;
+    spawnAsteroid({
+      radius: 1.7,
+      distance: 9,
+      lateral: 0,
+      vertical: 0,
+      speed: 12,
+    });
+    return window.__GOSHA_GAME_DEBUG__.state();
+  },
   placePlayerNearChicken: () => {
     if (game.phase !== "planet") {
       landOnNewPlanet();
@@ -647,7 +722,11 @@ window.addEventListener("keydown", (event) => {
   }
   if (event.code === "Space") {
     event.preventDefault();
-    requestJumpOrBoard();
+    if (game.phase === "space") {
+      fireSpaceBlaster();
+    } else {
+      requestJumpOrBoard();
+    }
   }
   if (event.code === "KeyF") {
     swingSword();
@@ -875,6 +954,7 @@ function createRocket() {
   group.position.copy(rocketHome);
 
   const pad = new THREE.Mesh(new THREE.CylinderGeometry(4.2, 4.4, 0.35, 40), materials.rock);
+  pad.name = "Rocket Landing Pad";
   pad.position.y = 0.18;
   pad.receiveShadow = true;
   group.add(pad);
@@ -941,6 +1021,7 @@ function createRocket() {
 
   group.userData.home = rocketHome.clone();
   group.userData.boardRadius = 5.6;
+  group.userData.pad = pad;
   return group;
 }
 
@@ -2213,6 +2294,7 @@ function animate() {
 
   updateMount(elapsed);
   updateRocket(delta, elapsed);
+  updateSpaceCombat(delta, elapsed);
   if (game.phase === "desert" || game.phase === "planet") {
     updateCapturePokemon(delta);
     updatePokeballs(delta);
@@ -3321,6 +3403,374 @@ function spawnRocketSmoke() {
   }
 }
 
+function startSpaceCombat() {
+  clearSpaceCombat();
+  game.asteroidsDestroyed = 0;
+  game.lastAsteroidHitTime = 0;
+  game.spaceShotCooldown = 0;
+  game.asteroidSpawnTimer = 0.42;
+}
+
+function updateSpaceCombat(delta, elapsed) {
+  if (game.phase !== "space" || game.lost) return;
+
+  game.spaceShotCooldown = Math.max(0, game.spaceShotCooldown - delta);
+  game.asteroidSpawnTimer -= delta;
+
+  if (game.asteroidSpawnTimer <= 0 && asteroids.length < 7) {
+    spawnAsteroid();
+    game.asteroidSpawnTimer = THREE.MathUtils.randFloat(0.78, 1.2);
+  }
+
+  updateSpaceShots(delta, elapsed);
+  updateAsteroids(delta);
+}
+
+function updateSpaceShots(delta, elapsed) {
+  for (let i = spaceShots.length - 1; i >= 0; i -= 1) {
+    const shot = spaceShots[i];
+    shot.userData.life -= delta;
+    shot.position.addScaledVector(shot.userData.velocity, delta);
+    const pulse = 0.96 + Math.sin(elapsed * 38 + i) * 0.08;
+    shot.scale.set(pulse, 1, pulse);
+
+    let destroyed = false;
+    for (let j = asteroids.length - 1; j >= 0; j -= 1) {
+      const asteroid = asteroids[j];
+      const hitDistance = asteroid.userData.radius + shot.userData.radius;
+      if (shot.position.distanceTo(asteroid.position) <= hitDistance) {
+        const hitDir = asteroid.position.clone().sub(shot.position).normalize();
+        destroyAsteroid(j, hitDir);
+        removeSpaceShot(i);
+        destroyed = true;
+        break;
+      }
+    }
+
+    if (destroyed) continue;
+
+    if (shot.userData.life <= 0 || shot.position.distanceTo(rocket.position) > 120) {
+      removeSpaceShot(i);
+    }
+  }
+}
+
+function updateAsteroids(delta) {
+  for (let i = asteroids.length - 1; i >= 0; i -= 1) {
+    const asteroid = asteroids[i];
+    const toShip = rocket.position.clone().sub(asteroid.position);
+    const distance = toShip.length();
+    const direction = distance > 0.001 ? toShip.normalize() : getRocketForward(new THREE.Vector3()).multiplyScalar(-1);
+
+    asteroid.userData.life -= delta;
+    asteroid.userData.velocity.lerp(direction.clone().multiplyScalar(asteroid.userData.speed), 0.018);
+    asteroid.position.addScaledVector(asteroid.userData.velocity, delta);
+    asteroid.rotation.x += asteroid.userData.spin.x * delta;
+    asteroid.rotation.y += asteroid.userData.spin.y * delta;
+    asteroid.rotation.z += asteroid.userData.spin.z * delta;
+
+    if (distance < asteroid.userData.radius + 2.25) {
+      const hitPosition = asteroid.position.clone();
+      createHitBurst(hitPosition, asteroid.userData.velocity.clone().normalize().multiplyScalar(-1));
+      removeAsteroid(i);
+      damageShip(12, "Asteroid hit the rocket. Press Space to shoot incoming asteroids.", hitPosition);
+      continue;
+    }
+
+    if (asteroid.userData.life <= 0 || distance > 145) {
+      removeAsteroid(i);
+    }
+  }
+}
+
+function fireSpaceBlaster() {
+  if (game.lost || game.phase !== "space" || game.spaceShotCooldown > 0) return false;
+
+  const forward = getRocketForward(new THREE.Vector3());
+  const origin = rocket.position.clone().addScaledVector(forward, 4.7);
+  const shot = new THREE.Group();
+  shot.name = "Rocket Space Blaster Shot";
+  shot.position.copy(origin);
+  shot.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), forward);
+
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.2, 2.4, 14), materials.spaceShot);
+  beam.position.y = -0.34;
+  shot.add(beam);
+
+  const core = new THREE.Mesh(new THREE.SphereGeometry(0.26, 18, 10), materials.spaceShotCore);
+  core.position.y = 1.02;
+  shot.add(core);
+
+  shot.userData = {
+    velocity: forward.clone().multiplyScalar(86),
+    life: 0.92,
+    maxLife: 0.92,
+    radius: 0.55,
+  };
+
+  spaceShots.push(shot);
+  scene.add(shot);
+  game.spaceShotCooldown = 0.18;
+  setStatus("Blaster fired. Break asteroids before they hit the rocket.", 0.75);
+  return true;
+}
+
+function spawnAsteroid(options = {}) {
+  if (!rocket) return null;
+
+  const forward = getRocketForward(new THREE.Vector3());
+  const right = getRocketRight(new THREE.Vector3());
+  const up = getRocketUp(new THREE.Vector3());
+  const radius = options.radius ?? THREE.MathUtils.randFloat(1.15, 2.25);
+  const asteroid = createRealisticAsteroid(radius);
+  const distance = options.distance ?? THREE.MathUtils.randFloat(34, 54);
+  const lateral = options.lateral ?? THREE.MathUtils.randFloatSpread(23);
+  const vertical = options.vertical ?? THREE.MathUtils.randFloatSpread(17);
+  const speed = options.speed ?? THREE.MathUtils.randFloat(14, 23);
+
+  asteroid.position
+    .copy(rocket.position)
+    .addScaledVector(forward, distance)
+    .addScaledVector(right, lateral)
+    .addScaledVector(up, vertical);
+
+  const target = rocket.position
+    .clone()
+    .addScaledVector(right, THREE.MathUtils.randFloatSpread(options.targetSpread ?? 3.2))
+    .addScaledVector(up, THREE.MathUtils.randFloatSpread(options.targetSpread ?? 2.4));
+
+  asteroid.userData = {
+    radius: radius * 1.1,
+    speed,
+    velocity: target.sub(asteroid.position).normalize().multiplyScalar(speed),
+    spin: new THREE.Vector3(
+      THREE.MathUtils.randFloat(-1.1, 1.1),
+      THREE.MathUtils.randFloat(-1.25, 1.25),
+      THREE.MathUtils.randFloat(-1.0, 1.0),
+    ),
+    life: 7.5,
+    maxLife: 7.5,
+  };
+
+  asteroids.push(asteroid);
+  scene.add(asteroid);
+  return asteroid;
+}
+
+function createRealisticAsteroid(radius) {
+  const group = new THREE.Group();
+  group.name = "Cratered Realistic Asteroid";
+  const craters = createAsteroidCraterData(THREE.MathUtils.randInt(6, 10));
+  const body = new THREE.Mesh(createAsteroidGeometry(radius, craters), materials.asteroidSurface);
+  body.castShadow = true;
+  group.add(body);
+
+  craters.slice(0, 7).forEach((crater) => {
+    const discRadius = radius * Math.sin(crater.size) * THREE.MathUtils.randFloat(0.72, 0.96);
+    const surface = crater.normal.clone().multiplyScalar(radius * (1.006 - crater.depth * 0.18));
+
+    const bowl = new THREE.Mesh(new THREE.CircleGeometry(discRadius, 28), materials.asteroidCrater);
+    bowl.name = "Dark Asteroid Crater";
+    bowl.position.copy(surface);
+    bowl.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), crater.normal);
+    group.add(bowl);
+
+    const rim = new THREE.Mesh(
+      new THREE.TorusGeometry(discRadius * 1.04, Math.max(0.022, radius * 0.018), 8, 30),
+      materials.asteroidRim,
+    );
+    rim.name = "Raised Asteroid Crater Rim";
+    rim.position.copy(crater.normal.clone().multiplyScalar(radius * 1.012));
+    rim.quaternion.copy(bowl.quaternion);
+    group.add(rim);
+  });
+
+  const pebbleCount = THREE.MathUtils.randInt(12, 18);
+  for (let i = 0; i < pebbleCount; i += 1) {
+    const normal = randomUnitVector();
+    const pebble = new THREE.Mesh(
+      new THREE.DodecahedronGeometry(THREE.MathUtils.randFloat(radius * 0.04, radius * 0.11), 0),
+      i % 3 === 0 ? materials.asteroidShadow : materials.asteroidRim,
+    );
+    pebble.name = "Asteroid Surface Boulder";
+    pebble.position.copy(normal.multiplyScalar(radius * THREE.MathUtils.randFloat(0.92, 1.08)));
+    pebble.rotation.set(
+      THREE.MathUtils.randFloat(0, Math.PI),
+      THREE.MathUtils.randFloat(0, Math.PI),
+      THREE.MathUtils.randFloat(0, Math.PI),
+    );
+    group.add(pebble);
+  }
+
+  group.rotation.set(
+    THREE.MathUtils.randFloat(0, Math.PI),
+    THREE.MathUtils.randFloat(0, Math.PI),
+    THREE.MathUtils.randFloat(0, Math.PI),
+  );
+  return group;
+}
+
+function createAsteroidCraterData(count) {
+  const craters = [];
+  for (let i = 0; i < count; i += 1) {
+    craters.push({
+      normal: randomUnitVector(),
+      size: THREE.MathUtils.randFloat(0.16, 0.38),
+      depth: THREE.MathUtils.randFloat(0.08, 0.2),
+    });
+  }
+  return craters;
+}
+
+function createAsteroidGeometry(radius, craters) {
+  const baseGeometry = new THREE.IcosahedronGeometry(radius, 4);
+  const geometry = baseGeometry.index ? baseGeometry.toNonIndexed() : baseGeometry;
+  if (geometry !== baseGeometry) baseGeometry.dispose();
+
+  const positions = geometry.attributes.position;
+  const colors = [];
+  const vertex = new THREE.Vector3();
+  const normal = new THREE.Vector3();
+  const color = new THREE.Color();
+  const shadow = new THREE.Color(0x252b34);
+  const lightDirection = new THREE.Vector3(-0.45, 0.62, 0.66).normalize();
+
+  for (let i = 0; i < positions.count; i += 1) {
+    vertex.fromBufferAttribute(positions, i);
+    normal.copy(vertex).normalize();
+
+    const grain =
+      Math.sin(normal.x * 10.7 + normal.y * 2.9) * 0.055 +
+      Math.sin(normal.z * 12.4 - normal.x * 4.5) * 0.045 +
+      Math.cos((normal.x + normal.y - normal.z) * 17.0) * 0.035;
+    const chunkiness =
+      Math.sin(normal.x * 4.1 + 1.7) * 0.08 +
+      Math.cos(normal.y * 4.7 - normal.z * 2.2) * 0.07;
+    let craterDent = 0;
+    let craterRim = 0;
+    let craterShade = 0;
+
+    craters.forEach((crater) => {
+      const angle = normal.angleTo(crater.normal);
+      if (angle < crater.size) {
+        const t = 1 - angle / crater.size;
+        const smooth = t * t * (3 - 2 * t);
+        craterDent += crater.depth * smooth;
+        craterShade = Math.max(craterShade, smooth);
+      }
+
+      const rimDistance = Math.abs(angle - crater.size * 0.82);
+      if (rimDistance < crater.size * 0.17) {
+        craterRim += (1 - rimDistance / (crater.size * 0.17)) * crater.depth * 0.55;
+      }
+    });
+
+    const radial = radius * Math.max(0.62, 1 + grain + chunkiness + craterRim - craterDent);
+    vertex.copy(normal).multiplyScalar(radial);
+    positions.setXYZ(i, vertex.x, vertex.y, vertex.z);
+
+    const light = THREE.MathUtils.clamp(normal.dot(lightDirection) * 0.45 + 0.55, 0, 1);
+    const warmth = THREE.MathUtils.clamp(0.5 + normal.x * 0.25 - normal.z * 0.18, 0, 1);
+    color.setHSL(0.07 + warmth * 0.025, 0.06 + warmth * 0.055, 0.36 + light * 0.24 + grain * 0.28);
+    if (craterShade > 0.18) {
+      color.lerp(shadow, THREE.MathUtils.clamp(craterShade * 0.48, 0, 0.62));
+    }
+    colors.push(color.r, color.g, color.b);
+  }
+
+  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+function randomUnitVector() {
+  const vector = new THREE.Vector3(
+    THREE.MathUtils.randFloatSpread(1),
+    THREE.MathUtils.randFloatSpread(1),
+    THREE.MathUtils.randFloatSpread(1),
+  );
+  if (vector.lengthSq() < 0.0001) return new THREE.Vector3(0, 1, 0);
+  return vector.normalize();
+}
+
+function destroyAsteroid(index, hitDir) {
+  const asteroid = asteroids[index];
+  if (!asteroid) return;
+
+  const position = asteroid.position.clone();
+  createHitBurst(position, hitDir.lengthSq() > 0 ? hitDir : getRocketForward(new THREE.Vector3()));
+  createDamageNumber(position.clone().add(new THREE.Vector3(0, 1.1, 0)), "BOOM", "enemy");
+  removeAsteroid(index);
+  game.asteroidsDestroyed += 1;
+  game.lastAsteroidHitTime = clock.elapsedTime;
+  game.cameraShake = Math.max(game.cameraShake, 0.12);
+  setStatus("Asteroid blown apart before it hit the rocket.", 1.35);
+}
+
+function removeAsteroid(index) {
+  const asteroid = asteroids[index];
+  if (!asteroid) return;
+
+  scene.remove(asteroid);
+  asteroid.traverse((child) => {
+    if (child.geometry) child.geometry.dispose();
+  });
+  asteroids.splice(index, 1);
+}
+
+function removeSpaceShot(index) {
+  const shot = spaceShots[index];
+  if (!shot) return;
+
+  scene.remove(shot);
+  shot.traverse((child) => {
+    if (child.geometry) child.geometry.dispose();
+  });
+  spaceShots.splice(index, 1);
+}
+
+function clearSpaceCombat() {
+  for (let i = asteroids.length - 1; i >= 0; i -= 1) {
+    removeAsteroid(i);
+  }
+
+  for (let i = spaceShots.length - 1; i >= 0; i -= 1) {
+    removeSpaceShot(i);
+  }
+
+  game.spaceShotCooldown = 0;
+  game.asteroidSpawnTimer = 0;
+}
+
+function damageShip(amount, message, position = rocket.position.clone()) {
+  if (game.lost) return;
+
+  game.health = Math.max(0, game.health - amount);
+  game.cameraShake = Math.max(game.cameraShake, 0.24);
+  createDamageNumber(position.clone().add(new THREE.Vector3(0, 1.4, 0)), `-${amount}`, "player");
+  setStatus(message, 2.5);
+
+  if (game.health <= 0) {
+    game.lost = true;
+    shipVelocity.multiplyScalar(0.15);
+    setStatus("Rocket destroyed by asteroids. Press R to try again.", 30);
+  }
+}
+
+function prepareDebugSpaceFlight() {
+  game.phase = "space";
+  game.flightTarget = "planet";
+  game.lost = false;
+  game.won = false;
+  game.health = Math.max(game.health, 50);
+  player.visible = false;
+  setWorldMode("space");
+  rocket.position.set(0, 72, 36);
+  shipVelocity.set(0, 8, -32);
+  rocket.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0.1, -1).normalize());
+  updateRocketFlame(0.92, false);
+}
+
 function beginRocketBoarding(origin = game.phase) {
   if (origin === "planet") {
     stopDragonEncounter();
@@ -3351,6 +3801,7 @@ function beginRocketBoarding(origin = game.phase) {
 
 function beginSpaceFlight() {
   game.phase = "space";
+  startSpaceCombat();
   if (game.flightTarget === "desert") {
     shipVelocity.set(0, 8, 32);
     rocket.position.set(0, 72, -36);
@@ -3379,6 +3830,7 @@ function boardChickenPassenger() {
 }
 
 function landOnNewPlanet() {
+  clearSpaceCombat();
   game.phase = "planet";
   game.escaped = true;
   game.won = false;
@@ -3406,6 +3858,7 @@ function landOnNewPlanet() {
 
 function landBackOnDesert() {
   stopDragonEncounter();
+  clearSpaceCombat();
   game.phase = "desert";
   game.escaped = false;
   game.won = false;
@@ -3466,6 +3919,9 @@ function setWorldMode(mode) {
     desertChicken.visible = showDesert && game.returnedChicken;
   }
   rocket.visible = true;
+  if (rocket.userData.pad) {
+    rocket.userData.pad.visible = mode !== "launching" && mode !== "space";
+  }
 }
 
 function updateCamera(delta, elapsed) {
@@ -3478,6 +3934,12 @@ function updateCamera(delta, elapsed) {
 
   if (game.phase === "space") {
     const desired = rocket.position.clone().add(new THREE.Vector3(0, 7, 24));
+    if (game.cameraShake > 0) {
+      game.cameraShake = Math.max(0, game.cameraShake - delta);
+      const shake = game.cameraShake * 0.48;
+      desired.x += Math.sin(elapsed * 65) * shake;
+      desired.y += Math.cos(elapsed * 73) * shake;
+    }
     camera.position.lerp(desired, 1 - Math.pow(0.001, delta));
     camera.lookAt(rocket.position.clone().add(shipVelocity.clone().normalize().multiplyScalar(8)));
     return;
@@ -3504,8 +3966,8 @@ function updateHud(delta) {
   if (game.statusTimer <= 0 && !game.lost) {
     if (game.phase === "space") {
       ui.status.textContent = game.flightTarget === "desert"
-        ? "Steer the rocket back to the original planet."
-        : "Steer the rocket to the green planet.";
+        ? "Steer home and press Space to shoot asteroids."
+        : "Steer to the green planet and press Space to shoot asteroids.";
     } else if (game.phase === "planet") {
       const nearestChicken = getNearestChicken();
       const rocketDistance = player.position.distanceTo(rocket.position);
@@ -3872,6 +4334,10 @@ function resetGame() {
   game.capturePokemonSpawned = false;
   game.capturePokemonCaptured = false;
   game.companionCapturePower = 0;
+  game.spaceShotCooldown = 0;
+  game.asteroidSpawnTimer = 0;
+  game.asteroidsDestroyed = 0;
+  game.lastAsteroidHitTime = 0;
   player.position.set(0, groundY(0, 8), 8);
   player.rotation.y = 0;
   game.targetYaw = 0;
@@ -3889,6 +4355,7 @@ function resetGame() {
   if (desertChicken) desertChicken.visible = false;
   clearSmokePuffs();
   clearLavaBombs();
+  clearSpaceCombat();
   stopDragonEncounter();
   clearPokeballs();
   resetCapturePokemon();
@@ -4030,6 +4497,18 @@ function getPlayerForward(target = new THREE.Vector3()) {
 
 function getPlayerRight(target = new THREE.Vector3()) {
   return target.set(Math.cos(player.rotation.y), 0, -Math.sin(player.rotation.y)).normalize();
+}
+
+function getRocketForward(target = new THREE.Vector3()) {
+  return target.set(0, 1, 0).applyQuaternion(rocket.quaternion).normalize();
+}
+
+function getRocketRight(target = new THREE.Vector3()) {
+  return target.set(1, 0, 0).applyQuaternion(rocket.quaternion).normalize();
+}
+
+function getRocketUp(target = new THREE.Vector3()) {
+  return target.set(0, 0, 1).applyQuaternion(rocket.quaternion).normalize();
 }
 
 function yawForDirection(direction) {
