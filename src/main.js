@@ -2323,6 +2323,8 @@ function createGrowlitheLeg(x, z, index) {
   const group = new THREE.Group();
   group.userData.isLeg = true;
   group.userData.index = index;
+  group.userData.gaitOffset = index === 0 || index === 3 ? 0 : Math.PI;
+  group.userData.isFrontLeg = index >= 2;
   group.position.set(x, 0.86, z);
 
   const upper = new THREE.Mesh(new THREE.BoxGeometry(0.27, 0.84, 0.29), materials.growlitheFur);
@@ -2711,11 +2713,12 @@ function updatePlayer(delta) {
   player.rotation.y = dampAngle(player.rotation.y, game.targetYaw, 8, delta);
 
   const hasMovement = forwardInput !== 0;
+  const isPredatory = game.runFastMode;
   if (hasMovement && game.danceTimer <= 0) {
     const speed = (game.runFastMode ? RUN_SPEED : WALK_SPEED) * movementMultiplier * forwardInput;
     const forward = getPlayerForward(tempVec);
     playerVelocity.lerp(forward.multiplyScalar(speed), 0.16);
-    player.userData.walkCycle += delta * playerVelocity.length() * 1.4;
+    player.userData.walkCycle += delta * playerVelocity.length() * (isPredatory ? 2.62 : 1.24);
   } else {
     if (turnInput !== 0) {
       playerVelocity.set(0, 0, 0);
@@ -2738,16 +2741,27 @@ function updatePlayer(delta) {
     resetGrowlitheDancePose();
   }
 
-  const bob = Math.sin(player.userData.walkCycle * 2) * Math.min(playerVelocity.length() / 9, 1) * 0.07;
-  player.children[0].position.y = 1.15 + bob;
-  player.children[1].position.y = 1.25 + bob * 0.7;
+  const speedFactor = Math.min(playerVelocity.length() / 9, 1);
+  const bob = Math.sin(player.userData.walkCycle * (isPredatory ? 2.2 : 1.9)) * speedFactor * (isPredatory ? 0.12 : 0.03);
+  const stance = isPredatory ? -0.06 : -0.01;
+  player.children[0].position.y = 1.15 + stance + bob;
+  player.children[1].position.y = 1.25 + stance * 0.85 + bob * 0.62;
+  player.children[0].rotation.x = Math.sin(player.userData.walkCycle * (isPredatory ? 2.0 : 1.6)) * speedFactor * (isPredatory ? 0.065 : 0.02);
+  player.children[0].rotation.z = -0.08 * (isPredatory ? 1 : 0.35) * Math.sin(player.userData.walkCycle * 2.1) * speedFactor;
+  player.children[0].rotation.y = Math.PI * 0.015 * Math.sin(player.userData.walkCycle * 0.9 + 0.65) * speedFactor;
 
   player.userData.legs.forEach((leg) => {
-    const phase = player.userData.walkCycle + leg.userData.index * 0.85;
+    const frontLead = isPredatory ? (leg.userData.isFrontLeg ? 0.26 : -0.11) : (leg.userData.isFrontLeg ? 0.05 : -0.03);
+    const phase = player.userData.walkCycle + leg.userData.gaitOffset + frontLead;
     const side = leg.position.x > 0 ? 1 : -1;
-    leg.rotation.z = side * (0.06 + Math.sin(phase) * 0.13);
-    leg.rotation.x = Math.cos(phase) * 0.08;
-    const walkingLift = Math.max(0, Math.sin(phase)) * Math.min(playerVelocity.length() / 9, 1) * 0.12;
+    const stride = isPredatory ? 1.6 : 0.72;
+    const rearPush = leg.userData.isFrontLeg ? 0.92 : 1.14;
+    const legWave = Math.sin(phase);
+    const recoveryWave = Math.sin(phase + Math.PI);
+    leg.rotation.z = side * (0.02 + legWave * (0.11 + 0.06 * stride) * (leg.userData.isFrontLeg ? 0.92 : 1.04));
+    leg.rotation.x = Math.cos(phase) * (0.055 + 0.045 * stride) * rearPush;
+    const walkLiftCurve = Math.max(0, legWave) * 1.4 + Math.max(0, recoveryWave) * 0.3;
+    const walkingLift = walkLiftCurve * speedFactor * (0.06 + 0.052 * stride) * rearPush;
     leg.position.y = 0.86 + walkingLift;
     game.maxLegLift = Math.max(game.maxLegLift, walkingLift);
   });
